@@ -86,7 +86,7 @@ else:
         sc.tl.leiden(
             wr_joyal,
             resolution=resolution,
-            key_added=f"leiden_res_{resolution:.2f}",
+            key_added=f"leiden_res_{resolution:.2f}_v0",
             flavor="igraph",
             random_state=0,
         )
@@ -102,7 +102,7 @@ wr_joyal
 #| fig-height: 16
 # TODO: eleven panels in one grid may be too small to judge; consider splitting into
 # several plots of a few resolutions each.
-resolution_keys = [column for column in wr_joyal.obs.columns if column.startswith("leiden_res_")]
+resolution_keys = [column for column in wr_joyal.obs.columns if column.endswith("_v0")]
 
 sc.pl.umap(
     wr_joyal,
@@ -118,9 +118,20 @@ sc.pl.umap(
 #| label: choose-resolution-wr-joyal
 wr_joyal_resolution = 1.0
 
-chosen_key = f"leiden_res_{wr_joyal_resolution:.2f}"
-wr_joyal.obs["cluster"] = wr_joyal.obs[chosen_key]
+leiden_key = f"leiden_res_{wr_joyal_resolution:.2f}_v0"
+ranked_key = f"leiden_res_{wr_joyal_resolution:.2f}_v1"
 
-print(f"{chosen_key}: {wr_joyal.obs['cluster'].nunique()} clusters")
-wr_joyal.obs["cluster"].value_counts()
+cluster_sizes = wr_joyal.obs[leiden_key].value_counts()
+ranked_labels = [str(rank) for rank in range(1, len(cluster_sizes) + 1)]
+size_rank = dict(zip(cluster_sizes.index, ranked_labels))
+
+wr_joyal.obs[ranked_key] = (
+    wr_joyal.obs[leiden_key]
+    .map(size_rank)
+    .astype("category")
+    .cat.reorder_categories(ranked_labels)
+)
+
+print(f"{ranked_key}: {wr_joyal.obs[ranked_key].nunique()} clusters")
+wr_joyal.obs[ranked_key].value_counts()
 ```
