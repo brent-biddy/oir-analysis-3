@@ -21,6 +21,7 @@ from urllib.request import urlretrieve
 import anndata as ad
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import scanpy as sc
 from scipy.sparse import csr_matrix
@@ -161,17 +162,34 @@ for leiden_key_v0 in resolution_keys:
 
 ```{python}
 #| label: umap-sweep-wr-joyal
-#| fig-width: 3.0
-#| fig-height: 3.0
+#| fig-width: 8.6
+#| fig-height: 3.4
 for start in range(0, len(resolution_keys), 3):
-    sc.pl.umap(
-        wr_joyal,
-        color=resolution_keys[start:start + 3],
-        ncols=3,
-        legend_loc="on data",
-        legend_fontsize=9,
-        frameon=False,
-    )
+    group = resolution_keys[start:start + 3]
+
+    # the second row is the colorbar strip the score UMAPs use. It is reserved here too,
+    # and left empty, so both sets of panels have identical geometry and superimpose.
+    fig, axs = plt.subplots(2, 3, height_ratios=[1, 0.22], constrained_layout=True)
+    for ax, leiden_key_v0 in zip(axs[0], group):
+        sc.pl.umap(
+            wr_joyal,
+            color=leiden_key_v0,
+            ax=ax,
+            legend_loc="on data",
+            legend_fontsize=9,
+            frameon=True,
+            show=False,
+        )
+        ax.set_aspect("equal", adjustable="datalim")
+
+    for bar_ax in axs[1]:
+        bar_ax.axis("off")
+
+    for empty_ax in axs[0][len(group):]:
+        fig.delaxes(empty_ax)
+
+    plt.show()
+    plt.close(fig)
 ```
 
 ::: {.content-visible when-format="html"}
@@ -210,15 +228,18 @@ wr_joyal.obs[ranked_key].value_counts()
 
 ```{python}
 #| label: umap-clusters-wr-joyal
-#| fig-width: 5.5
+#| fig-width: 5.0
 #| fig-height: 4.3
-sc.pl.umap(
+ax = sc.pl.umap(
     wr_joyal,
     color=ranked_key,
     legend_loc="on data",
     legend_fontoutline=2,
-    frameon=False,
+    frameon=True,
+    show=False,
 )
+ax.set_aspect("equal", adjustable="datalim")
+plt.show()
 ```
 
 ## QC metrics
@@ -304,10 +325,37 @@ for cell_type, score_key in zip(retina_markers, score_keys):
 
 ```{python}
 #| label: umap-scores-wr-joyal
-#| fig-width: 3.0
-#| fig-height: 3.0
+#| fig-width: 8.6
+#| fig-height: 3.4
 for start in range(0, len(score_keys), 3):
-    sc.pl.umap(wr_joyal, color=score_keys[start:start + 3], ncols=3, frameon=False)
+    group = score_keys[start:start + 3]
+
+    fig, axs = plt.subplots(2, 3, height_ratios=[1, 0.22], constrained_layout=True)
+    for ax, bar_ax, score_key in zip(axs[0], axs[1], group):
+        sc.pl.umap(
+            wr_joyal,
+            color=score_key,
+            ax=ax,
+            frameon=True,
+            colorbar_loc=None,
+            show=False,
+        )
+        ax.set_aspect("equal", adjustable="datalim")
+
+        # the strip reserves the space; the colorbar drawn inside it is excluded from the
+        # layout so its tick labels cannot push the panel around
+        bar_ax.axis("off")
+        colorbar_ax = bar_ax.inset_axes([0.325, 0.55, 0.35, 0.45])
+        colorbar_ax.set_in_layout(False)
+        fig.colorbar(ax.collections[0], cax=colorbar_ax, orientation="horizontal")
+
+    for empty_ax in axs[0][len(group):]:
+        fig.delaxes(empty_ax)
+    for empty_bar_ax in axs[1][len(group):]:
+        empty_bar_ax.axis("off")
+
+    plt.show()
+    plt.close(fig)
 ```
 
 ## Marker genes by cluster
@@ -317,4 +365,25 @@ for start in range(0, len(score_keys), 3):
 #| fig-width: 9
 #| fig-height: 4.3
 sc.pl.dotplot(wr_joyal, markers_present, groupby=ranked_key, standard_scale="var")
+```
+
+## Marker score heatmap
+
+```{python}
+#| label: heatmap-scores-wr-joyal
+#| fig-width: 9
+#| fig-height: 4.3
+cell_type_labels = [cell_type.replace("_", " ") for cell_type in retina_markers]
+
+heatmap = sc.pl.matrixplot(
+    wr_joyal,
+    score_keys,
+    groupby=ranked_key,
+    standard_scale="var",
+    cmap="viridis",
+    colorbar_title="mean score\n(scaled)",
+    show=False,
+)
+heatmap["mainplot_ax"].set_xticklabels(cell_type_labels, rotation=90)
+plt.show()
 ```
