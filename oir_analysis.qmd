@@ -37,6 +37,8 @@ plt.rcParams.update({
 })
 ```
 
+::: {.content-visible when-format="html"}
+
 ## Download
 
 ```{python}
@@ -128,6 +130,8 @@ else:
 
 wr_joyal
 ```
+
+:::
 
 ## Leiden sweep
 
