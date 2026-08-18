@@ -76,6 +76,18 @@ else:
     for column in ["condition", "timepoint", "sort", "lab", "replicate", "batch"]:
         wr_joyal.obs[column] = wr_joyal.obs[column].cat.remove_unused_categories()
 
+    wr_joyal.var["mt"] = wr_joyal.var_names.str.startswith("MT-")
+    wr_joyal.var["ribo"] = wr_joyal.var_names.str.startswith(("RPS", "RPL"))
+    wr_joyal.var["hb"] = wr_joyal.var_names.str.startswith(("HBA-", "HBB-"))
+    sc.pp.calculate_qc_metrics(
+        wr_joyal,
+        qc_vars=["mt", "ribo", "hb"],
+        expr_type="log1p",
+        percent_top=None,
+        log1p=False,
+        inplace=True,
+    )
+
     sc.pp.filter_genes(wr_joyal, min_cells=3)
     sc.pp.highly_variable_genes(wr_joyal, n_top_genes=2000, flavor="seurat")
     sc.pp.pca(wr_joyal, svd_solver="arpack")
@@ -147,4 +159,21 @@ sc.pl.umap(
     legend_fontoutline=2,
     frameon=False,
 )
+```
+
+```{python}
+#| label: qc-violin-wr-joyal
+#| fig-width: 12
+#| fig-height: 4
+qc_keys = ["n_genes_by_log1p", "total_log1p", "pct_log1p_mt", "pct_log1p_ribo", "pct_log1p_hb"]
+
+sc.pl.violin(wr_joyal, qc_keys, multi_panel=True, stripplot=False)
+```
+
+```{python}
+#| label: qc-violin-by-cluster-wr-joyal
+#| fig-width: 12
+#| fig-height: 18
+for qc_key in qc_keys:
+    sc.pl.violin(wr_joyal, qc_key, groupby=ranked_key, stripplot=False, rotation=90)
 ```
