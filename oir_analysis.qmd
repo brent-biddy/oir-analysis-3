@@ -195,11 +195,13 @@ retina_markers = {
 }
 
 score_keys = []
+markers_present = {}
 for cell_type, genes in retina_markers.items():
     present = [gene.upper() for gene in genes if gene.upper() in wr_joyal.var_names]
     score_key = f"score_{cell_type}"
     sc.tl.score_genes(wr_joyal, gene_list=present, score_name=score_key)
     score_keys.append(score_key)
+    markers_present[cell_type] = present
     print(f"{cell_type}: {len(present)}/{len(genes)} markers")
 ```
 
@@ -216,4 +218,11 @@ for score_key in score_keys:
 #| fig-width: 12
 #| fig-height: 16
 sc.pl.umap(wr_joyal, color=score_keys, ncols=3, frameon=False)
+```
+
+```{python}
+#| label: dotplot-markers-wr-joyal
+#| fig-width: 16
+#| fig-height: 8
+sc.pl.dotplot(wr_joyal, markers_present, groupby=ranked_key, standard_scale="var")
 ```
