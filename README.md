@@ -119,13 +119,40 @@ Quarto itself is expected to be on `PATH` and is not installed by the env.
 
 ## Rendering
 
+The document declares two formats — an HTML report and a PowerPoint deck — so pick one:
+
 ```bash
 export QUARTO_PYTHON=$CONDA_PREFIX/bin/python
-quarto render oir_analysis.qmd
+
+quarto render oir_analysis.qmd --to html    # the working report
+quarto render oir_analysis.qmd --to pptx    # the deck
 ```
 
-The first render downloads 236 MB and spends a few minutes parsing it. Later renders read the
-saved objects instead.
+**Prefer `--to` over the bare `quarto render`**, which builds both formats and executes the
+notebook once per format — the whole analysis, twice.
+
+The first render downloads 236 MB, spends a few minutes parsing it, and clusters; later renders
+read the saved objects instead. Both outputs are gitignored.
+
+The two formats differ only in what they show, not in what they run. The HTML prints its code;
+`echo: false` is scoped to the `pptx` block so slides carry figures alone.
+
+Slides come from `##` headings — pandoc has nothing else to split on, which is why every chunk
+that produces output has one and `setup`, which produces none, does not. `slide-level: 2` is
+required rather than stylistic: without it pandoc infers the level from the headings present,
+and adding a first `#` would silently demote every `##` to a bullet.
+
+There is no reference template, so the deck uses pandoc's default 16:9 at 10 × 5.625in. Figure
+sizes are set per chunk against that, and they are **per panel** — scanpy multiplies the
+figure size by `ncols`, so a `fig-width` meant as a whole-figure width silently asks for
+something several times the slide.
+
+A deck is a zip, and it is worth looking inside one rather than trusting an exit code:
+
+```bash
+mkdir -p /tmp/deck && unzip -o -q oir_analysis.pptx -d /tmp/deck
+echo "slides: $(ls /tmp/deck/ppt/slides/*.xml | wc -l)  images: $(ls /tmp/deck/ppt/media | wc -l)"
+```
 
 ## Layout
 
