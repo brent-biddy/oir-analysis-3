@@ -19,6 +19,7 @@ from pathlib import Path
 from urllib.request import urlretrieve
 
 import anndata as ad
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import pandas as pd
 import scanpy as sc
@@ -131,6 +132,29 @@ else:
 wr_joyal
 ```
 
+```{python}
+#| label: palettes-wr-joyal
+obs_palettes = {
+    "condition": {"NORM": "#2AABB8", "OIR": "#E87D2A"},
+    "timepoint": {"P14": "#2855A0", "P17": "#D63650"},
+    "sort":      {"Cd73ft": "#C9A227", "WR": "#5DB85D"},
+    "lab":       {"Joyal": "#7B4FB5", "Mccarrol": "#A0522D"},
+    "batch":     {"Cd73ft_Joyal": "#C9A227", "WR_Joyal": "#5DB85D", "WR_Mccarrol": "#A0522D"},
+}
+
+for obs_key, palette in obs_palettes.items():
+    categories = wr_joyal.obs[obs_key].cat.categories
+    wr_joyal.uns[f"{obs_key}_colors"] = [palette[category] for category in categories]
+
+resolution_keys = [column for column in wr_joyal.obs.columns if column.endswith("_v0")]
+
+for leiden_key_v0 in resolution_keys:
+    categories = wr_joyal.obs[leiden_key_v0].cat.categories
+    wr_joyal.uns[f"{leiden_key_v0}_colors"] = [
+        mcolors.to_hex(plt.cm.tab20.colors[int(category) % 20]) for category in categories
+    ]
+```
+
 :::
 
 ## Leiden sweep
@@ -139,8 +163,6 @@ wr_joyal
 #| label: umap-sweep-wr-joyal
 #| fig-width: 3.0
 #| fig-height: 3.0
-resolution_keys = [column for column in wr_joyal.obs.columns if column.endswith("_v0")]
-
 for start in range(0, len(resolution_keys), 3):
     sc.pl.umap(
         wr_joyal,
@@ -151,6 +173,8 @@ for start in range(0, len(resolution_keys), 3):
         frameon=False,
     )
 ```
+
+::: {.content-visible when-format="html"}
 
 ## Chosen resolution
 
@@ -172,9 +196,15 @@ wr_joyal.obs[ranked_key] = (
     .cat.reorder_categories(ranked_labels)
 )
 
+wr_joyal.uns[f"{ranked_key}_colors"] = [
+    mcolors.to_hex(plt.cm.tab20.colors[(int(label) - 1) % 20]) for label in ranked_labels
+]
+
 print(f"{ranked_key}: {wr_joyal.obs[ranked_key].nunique()} clusters")
 wr_joyal.obs[ranked_key].value_counts()
 ```
+
+:::
 
 ## Clusters on the UMAP
 
@@ -197,9 +227,18 @@ sc.pl.umap(
 #| label: qc-violin-wr-joyal
 #| fig-width: 1.8
 #| fig-height: 4
-qc_keys = ["n_genes_by_log1p", "total_log1p", "pct_log1p_mt", "pct_log1p_ribo", "pct_log1p_hb"]
+qc_metrics = {
+    "n_genes_by_log1p": "Genes detected",
+    "total_log1p": "Total expression",
+    "pct_log1p_mt": "% mitochondrial",
+    "pct_log1p_ribo": "% ribosomal",
+    "pct_log1p_hb": "% hemoglobin",
+}
 
-sc.pl.violin(wr_joyal, qc_keys, multi_panel=True, stripplot=False)
+grid = sc.pl.violin(wr_joyal, list(qc_metrics), multi_panel=True, stripplot=False, show=False)
+for ax, qc_label in zip(grid.axes.flat, qc_metrics.values()):
+    ax.set_ylabel(qc_label)
+plt.show()
 ```
 
 ## QC metrics by cluster
@@ -208,9 +247,14 @@ sc.pl.violin(wr_joyal, qc_keys, multi_panel=True, stripplot=False)
 #| label: qc-violin-by-cluster-wr-joyal
 #| fig-width: 9
 #| fig-height: 3.5
-for qc_key in qc_keys:
-    sc.pl.violin(wr_joyal, qc_key, groupby=ranked_key, stripplot=False, rotation=90)
+for qc_key, qc_label in qc_metrics.items():
+    ax = sc.pl.violin(wr_joyal, qc_key, groupby=ranked_key, stripplot=False, rotation=90, show=False)
+    ax.set_ylabel(qc_label)
+    ax.set_xlabel("Cluster")
+    plt.show()
 ```
+
+::: {.content-visible when-format="html"}
 
 ## Marker scores
 
@@ -241,23 +285,29 @@ for cell_type, genes in retina_markers.items():
     print(f"{cell_type}: {len(present)}/{len(genes)} markers")
 ```
 
+:::
+
 ## Marker scores by cluster
 
 ```{python}
 #| label: score-violin-by-cluster-wr-joyal
 #| fig-width: 9
 #| fig-height: 3.5
-for score_key in score_keys:
-    sc.pl.violin(wr_joyal, score_key, groupby=ranked_key, stripplot=False, rotation=90)
+for cell_type, score_key in zip(retina_markers, score_keys):
+    ax = sc.pl.violin(wr_joyal, score_key, groupby=ranked_key, stripplot=False, rotation=90, show=False)
+    ax.set_ylabel(f"{cell_type.replace('_', ' ')} score")
+    ax.set_xlabel("Cluster")
+    plt.show()
 ```
 
 ## Marker scores on the UMAP
 
 ```{python}
 #| label: umap-scores-wr-joyal
-#| fig-width: 2.8
-#| fig-height: 2.8
-sc.pl.umap(wr_joyal, color=score_keys, ncols=3, frameon=False)
+#| fig-width: 3.0
+#| fig-height: 3.0
+for start in range(0, len(score_keys), 3):
+    sc.pl.umap(wr_joyal, color=score_keys[start:start + 3], ncols=3, frameon=False)
 ```
 
 ## Marker genes by cluster
