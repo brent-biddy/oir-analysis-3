@@ -177,3 +177,43 @@ sc.pl.violin(wr_joyal, qc_keys, multi_panel=True, stripplot=False)
 for qc_key in qc_keys:
     sc.pl.violin(wr_joyal, qc_key, groupby=ranked_key, stripplot=False, rotation=90)
 ```
+
+```{python}
+#| label: score-markers-wr-joyal
+retina_markers = {
+    "Rods": ["Rho", "Pde6b", "Nrl", "Nr2e3"],
+    "Cones": ["Opn1mw", "Opn1sw", "Arr3", "Thrb"],
+    "RGC": ["Rbpms", "Sncg", "Pou4f1", "Pou4f2"],
+    "Amacrine": ["Tfap2a", "Tfap2b", "Chat", "Vsx1"],
+    "Bipolar": ["Vsx2", "Isl1", "Prkca", "Cabp5"],
+    "Horizontal": ["Onecut1", "Onecut2", "Lhx1", "Prox1"],
+    "Muller_Glia": ["Rlbp1", "Glul", "Sox9", "Slc1a3"],
+    "Microglia": ["Cx3cr1", "P2ry12", "Tmem119", "Aif1"],
+    "Vascular_Endothelial": ["Cdh5", "Pecam1", "Tek"],
+    "Pericytes": ["Pdgfrb", "Acta2", "Des"],
+    "Astrocytes": ["Gfap", "Aldh1l1", "Aqp4"],
+}
+
+score_keys = []
+for cell_type, genes in retina_markers.items():
+    present = [gene.upper() for gene in genes if gene.upper() in wr_joyal.var_names]
+    score_key = f"score_{cell_type}"
+    sc.tl.score_genes(wr_joyal, gene_list=present, score_name=score_key)
+    score_keys.append(score_key)
+    print(f"{cell_type}: {len(present)}/{len(genes)} markers")
+```
+
+```{python}
+#| label: score-violin-by-cluster-wr-joyal
+#| fig-width: 12
+#| fig-height: 40
+for score_key in score_keys:
+    sc.pl.violin(wr_joyal, score_key, groupby=ranked_key, stripplot=False, rotation=90)
+```
+
+```{python}
+#| label: umap-scores-wr-joyal
+#| fig-width: 12
+#| fig-height: 16
+sc.pl.umap(wr_joyal, color=score_keys, ncols=3, frameon=False)
+```
