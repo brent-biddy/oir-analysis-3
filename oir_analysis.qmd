@@ -169,14 +169,13 @@ for leiden_key_v0 in resolution_keys:
 
 ```{python}
 #| label: umap-sweep-wr-joyal
-#| fig-width: 8.6
-#| fig-height: 3.4
 for start in range(0, len(resolution_keys), 3):
     group = resolution_keys[start:start + 3]
 
     # the second row is the colorbar strip the score UMAPs use. It is reserved here too,
     # and left empty, so both sets of panels have identical geometry and superimpose.
-    fig, axs = plt.subplots(2, 3, height_ratios=[1, 0.22], constrained_layout=True)
+    fig, axs = plt.subplots(2, 3, height_ratios=[1, 0.22], figsize=(8.6, 3.4),
+                            constrained_layout=True)
     for ax, leiden_key_v0 in zip(axs[0], group):
         sc.pl.umap(
             wr_joyal[draw_order],
@@ -235,8 +234,10 @@ wr_joyal.obs[ranked_key].value_counts()
 
 ```{python}
 #| label: umap-clusters-wr-joyal
-#| fig-width: 5.0
-#| fig-height: 4.3
+# scanpy builds the figure here, and takes no figsize argument, so rcParams is where its size
+# has to be set
+plt.rcParams["figure.figsize"] = (5.0, 4.3)
+
 ax = sc.pl.umap(
     wr_joyal[draw_order],
     color=ranked_key,
@@ -253,8 +254,6 @@ plt.show()
 
 ```{python}
 #| label: qc-violin-wr-joyal
-#| fig-width: 9
-#| fig-height: 3.0
 qc_metrics = {
     "n_genes_by_log1p": "Genes detected",
     "total_log1p": "Total expression",
@@ -268,12 +267,15 @@ violin_inner_kws = {"box_width": 2, "whis_width": 1, "marker": "o",
 qc_df = sc.get.obs_df(wr_joyal, keys=[ranked_key] + list(qc_metrics))
 batch_color = wr_joyal.uns["batch_colors"][0]
 
-fig, axes = plt.subplots(1, len(qc_metrics), squeeze=False, constrained_layout=True)
+fig, axes = plt.subplots(1, len(qc_metrics), squeeze=False, figsize=(9, 3.0),
+                         constrained_layout=True)
 for ax, (qc_key, qc_label) in zip(axes.flat, qc_metrics.items()):
     sns.violinplot(data=qc_df, y=qc_key, color=batch_color, cut=0, density_norm="width",
                    inner="box", inner_kws=violin_inner_kws, linewidth=0.5, ax=ax)
     ax.set_ylabel(qc_label, fontsize=9)
     ax.tick_params(axis="y", labelsize=8)
+    ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+    ax.set_axisbelow(True)
 
 plt.show()
 plt.close(fig)
@@ -283,13 +285,12 @@ plt.close(fig)
 
 ```{python}
 #| label: qc-violin-by-cluster-wr-joyal
-#| fig-width: 9
-#| fig-height: 4.3
 # only scanpy reads the _colors entry out of uns, so the palette is handed to seaborn
 # explicitly — otherwise a cluster changes color between the UMAP and these violins
 cluster_palette = dict(zip(wr_joyal.obs[ranked_key].cat.categories, wr_joyal.uns[f"{ranked_key}_colors"]))
 
-fig, axes = plt.subplots(len(qc_metrics), 1, squeeze=False, sharex=True, constrained_layout=True)
+fig, axes = plt.subplots(len(qc_metrics), 1, squeeze=False, sharex=True, figsize=(9, 4.3),
+                         constrained_layout=True)
 for ax, (qc_key, qc_label) in zip(axes.flat, qc_metrics.items()):
     # dodge=False because hue repeats x: left on, seaborn gives each of the 21 clusters its
     # own sub-slot and every violin is drawn a twentieth of its slot wide, off its tick
@@ -308,6 +309,8 @@ for ax, (qc_key, qc_label) in zip(axes.flat, qc_metrics.items()):
     ax.set_ylabel(qc_label, fontsize=7)
     ax.set_xlabel("")
     ax.tick_params(axis="y", labelsize=6)
+    ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+    ax.set_axisbelow(True)
 
 axes[-1][0].set_xlabel("Cluster", fontsize=9)
 axes[-1][0].tick_params(axis="x", labelsize=8)
@@ -352,15 +355,14 @@ for cell_type, genes in retina_markers.items():
 
 ```{python}
 #| label: score-violin-by-cluster-wr-joyal
-#| fig-width: 9
-#| fig-height: 4.3
 score_df = sc.get.obs_df(wr_joyal, keys=[ranked_key] + score_keys)
 
 for start in range(0, len(score_keys), 6):
     group = score_keys[start:start + 6]
     group_types = list(retina_markers)[start:start + 6]
 
-    fig, axes = plt.subplots(len(group), 1, squeeze=False, sharex=True, constrained_layout=True)
+    fig, axes = plt.subplots(len(group), 1, squeeze=False, sharex=True, figsize=(9, 4.3),
+                             constrained_layout=True)
     for ax, score_key, cell_type in zip(axes.flat, group, group_types):
         sns.violinplot(data=score_df, x=ranked_key, y=score_key, hue=ranked_key,
                        palette=cluster_palette, legend=False, dodge=False, cut=0,
@@ -375,6 +377,8 @@ for start in range(0, len(score_keys), 6):
         ax.set_ylabel(f"{cell_type.replace('_', ' ')} score", fontsize=7)
         ax.set_xlabel("")
         ax.tick_params(axis="y", labelsize=6)
+        ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+        ax.set_axisbelow(True)
 
     axes[-1][0].set_xlabel("Cluster", fontsize=9)
     axes[-1][0].tick_params(axis="x", labelsize=8)
@@ -386,12 +390,11 @@ for start in range(0, len(score_keys), 6):
 
 ```{python}
 #| label: umap-scores-wr-joyal
-#| fig-width: 8.6
-#| fig-height: 3.4
 for start in range(0, len(score_keys), 3):
     group = score_keys[start:start + 3]
 
-    fig, axs = plt.subplots(2, 3, height_ratios=[1, 0.22], constrained_layout=True)
+    fig, axs = plt.subplots(2, 3, height_ratios=[1, 0.22], figsize=(8.6, 3.4),
+                            constrained_layout=True)
     for ax, bar_ax, score_key in zip(axs[0], axs[1], group):
         sc.pl.umap(
             wr_joyal,
@@ -430,8 +433,8 @@ for start in range(0, len(score_keys), 3):
 
 ```{python}
 #| label: dotplot-markers-wr-joyal
-#| fig-width: 9
-#| fig-height: 4.3
+# figsize is deliberately not passed: dotplot derives its own from the gene and cluster counts,
+# and forcing it to slide dimensions packs 41 genes across 21 clusters until the dots overlap
 sc.pl.dotplot(wr_joyal, markers_present, groupby=ranked_key, standard_scale="var")
 ```
 
@@ -439,8 +442,6 @@ sc.pl.dotplot(wr_joyal, markers_present, groupby=ranked_key, standard_scale="var
 
 ```{python}
 #| label: heatmap-scores-wr-joyal
-#| fig-width: 9
-#| fig-height: 4.3
 mean_scores = score_df.groupby(ranked_key, observed=True)[score_keys].mean()
 mean_scores.columns = [cell_type.replace("_", " ") for cell_type in retina_markers]
 
@@ -467,7 +468,8 @@ for cluster in scaled_by_cluster.index:
         column_order.append(best)
 column_order += [c for c in scaled_by_cluster.columns if c not in column_order]
 
-fig, axes = plt.subplots(1, len(score_normalizations), squeeze=False, constrained_layout=True)
+fig, axes = plt.subplots(1, len(score_normalizations), squeeze=False, figsize=(9, 4.3),
+                         constrained_layout=True)
 for ax, (title, matrix) in zip(axes.flat, score_normalizations.items()):
     sns.heatmap(matrix[column_order], cmap="viridis", linewidths=0.5, linecolor="white",
                 cbar_kws={"shrink": 0.6, "pad": 0.02}, ax=ax)
@@ -519,8 +521,8 @@ pd.DataFrame({
 
 ```{python}
 #| label: umap-cell-types-wr-joyal
-#| fig-width: 6.5
-#| fig-height: 4.3
+plt.rcParams["figure.figsize"] = (6.5, 4.3)
+
 ax = sc.pl.umap(
     wr_joyal[draw_order],
     color="cell_type",
@@ -535,9 +537,8 @@ plt.show()
 
 ```{python}
 #| label: umap-txn1-wr-joyal
-#| fig-width: 4.3
-#| fig-height: 3.9
-fig, axs = plt.subplots(2, 1, height_ratios=[1, 0.22], constrained_layout=True)
+fig, axs = plt.subplots(2, 1, height_ratios=[1, 0.22], figsize=(4.3, 3.9),
+                        constrained_layout=True)
 
 sc.pl.umap(wr_joyal, color="TXN1", ax=axs[0], frameon=True, colorbar_loc=None, show=False)
 axs[0].set_aspect("equal", adjustable="datalim")
@@ -560,11 +561,9 @@ plt.close(fig)
 
 ```{python}
 #| label: txn1-violin-celltype-wr-joyal
-#| fig-width: 9
-#| fig-height: 3.5
 txn1_df = sc.get.obs_df(wr_joyal, keys=["TXN1", "cell_type", "condition", "timepoint"])
 
-fig, ax = plt.subplots(constrained_layout=True)
+fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
 sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", hue="cell_type",
                palette=cell_type_palette, legend=True, dodge=False, cut=0,
                density_norm="width", inner="box", inner_kws=violin_inner_kws,
@@ -582,6 +581,8 @@ ax.set_xlabel("")
 ax.set_ylabel("Txn1 (log1p)", fontsize=9)
 ax.tick_params(axis="x", labelrotation=45, labelsize=8)
 ax.tick_params(axis="y", labelsize=8)
+ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+ax.set_axisbelow(True)
 for label in ax.get_xticklabels():
     label.set_ha("right")
 ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
@@ -594,12 +595,10 @@ plt.close(fig)
 
 ```{python}
 #| label: txn1-violin-condition-wr-joyal
-#| fig-width: 9
-#| fig-height: 3.5
 condition_palette = dict(zip(wr_joyal.obs["condition"].cat.categories,
                              wr_joyal.uns["condition_colors"]))
 
-fig, ax = plt.subplots(constrained_layout=True)
+fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
 sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", hue="condition",
                palette=condition_palette, cut=0, density_norm="width", inner="box",
                inner_kws=violin_inner_kws, linewidth=0.5, ax=ax)
@@ -607,6 +606,33 @@ ax.set_xlabel("")
 ax.set_ylabel("Txn1 (log1p)", fontsize=9)
 ax.tick_params(axis="x", labelrotation=45, labelsize=8)
 ax.tick_params(axis="y", labelsize=8)
+ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+ax.set_axisbelow(True)
+for label in ax.get_xticklabels():
+    label.set_ha("right")
+ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
+
+plt.show()
+plt.close(fig)
+```
+
+## Txn1 by cell type and timepoint
+
+```{python}
+#| label: txn1-violin-timepoint-wr-joyal
+timepoint_palette = dict(zip(wr_joyal.obs["timepoint"].cat.categories,
+                             wr_joyal.uns["timepoint_colors"]))
+
+fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
+sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", hue="timepoint",
+               palette=timepoint_palette, cut=0, density_norm="width", inner="box",
+               inner_kws=violin_inner_kws, linewidth=0.5, ax=ax)
+ax.set_xlabel("")
+ax.set_ylabel("Txn1 (log1p)", fontsize=9)
+ax.tick_params(axis="x", labelrotation=45, labelsize=8)
+ax.tick_params(axis="y", labelsize=8)
+ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+ax.set_axisbelow(True)
 for label in ax.get_xticklabels():
     label.set_ha("right")
 ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
@@ -619,40 +645,44 @@ plt.close(fig)
 
 ```{python}
 #| label: umap-txn1-stratified-wr-joyal
-#| fig-width: 9
-#| fig-height: 3.0
-wr_joyal.obs["stratum"] = pd.Categorical(
-    wr_joyal.obs["condition"].astype(str) + " " + wr_joyal.obs["timepoint"].astype(str),
-    categories=["NORM P14", "NORM P17", "OIR P14", "OIR P17"],
-)
-strata = list(wr_joyal.obs["stratum"].cat.categories)
+# laid out like the violin slides below: timepoint down the rows, condition across the
+# columns, so the same comparison sits in the same direction in every Txn1 figure
+condition_order = list(wr_joyal.obs["condition"].cat.categories)
+timepoints = list(wr_joyal.obs["timepoint"].cat.categories)
 
-# one square window covering the whole embedding, applied to every panel, so a cell sits in
-# the same place in all four and the panels can be read against each other
 umap_coords = wr_joyal.obsm["X_umap"]
-umap_center = umap_coords.mean(axis=0)
-umap_half = 0.55 * (umap_coords.max(axis=0) - umap_coords.min(axis=0)).max()
-
-# one scale across the four panels, so brightness means the same thing in each
-txn1 = sc.get.obs_df(wr_joyal, keys=["TXN1"])["TXN1"]
+txn1 = sc.get.obs_df(wr_joyal, keys=["TXN1"])["TXN1"].to_numpy()
 txn1_low, txn1_high = txn1.min(), txn1.max()
 
-fig, axs = plt.subplots(2, len(strata), height_ratios=[1, 0.22], constrained_layout=True)
-for ax, stratum in zip(axs[0], strata):
-    in_stratum = wr_joyal.obs["stratum"] == stratum
-    sc.pl.umap(wr_joyal[in_stratum], color="TXN1", ax=ax, frameon=True, colorbar_loc=None,
-               vmin=txn1_low, vmax=txn1_high, title=stratum, show=False)
-    ax.set_xlim(umap_center[0] - umap_half, umap_center[0] + umap_half)
-    ax.set_ylim(umap_center[1] - umap_half, umap_center[1] + umap_half)
-    ax.set_aspect("equal", adjustable="box")
-    ax.set_title(f"{stratum}  (n={in_stratum.sum():,})", fontsize=9)
+# drawn with scatter rather than sc.pl.umap: it puts the whole embedding underneath in grey,
+# and it fixes the point size, which scanpy scales by cell count — the sparse panels would
+# otherwise carry much larger points than the dense ones.
+fig, axes = plt.subplots(len(timepoints), len(condition_order), squeeze=False,
+                         figsize=(5.6, 4.4), constrained_layout=True)
+fig.get_layout_engine().set(w_pad=0.01, h_pad=0.01, wspace=0.01, hspace=0.02)
+for row, timepoint in enumerate(timepoints):
+    for column, condition in enumerate(condition_order):
+        ax = axes[row][column]
+        in_stratum = (
+            (wr_joyal.obs["timepoint"] == timepoint) & (wr_joyal.obs["condition"] == condition)
+        ).to_numpy()
 
-for bar_ax in axs[1]:
-    bar_ax.axis("off")
+        # every cell in grey, so each panel is read against the same outline rather than
+        # appearing to be a differently-shaped dataset
+        ax.scatter(umap_coords[:, 0], umap_coords[:, 1], s=1, c="#bfbfbf", linewidths=0)
+        points = ax.scatter(umap_coords[in_stratum, 0], umap_coords[in_stratum, 1], s=1,
+                            c=txn1[in_stratum], cmap="viridis",
+                            vmin=txn1_low, vmax=txn1_high, linewidths=0)
 
-colorbar_ax = axs[1][1].inset_axes([0.325, 0.82, 1.35, 0.18])
-colorbar_ax.set_in_layout(False)
-colorbar = fig.colorbar(axs[0][0].collections[0], cax=colorbar_ax, orientation="horizontal")
+        ax.set_aspect("equal", adjustable="datalim")
+        ax.set_ylabel(f"Txn1 — {timepoint}" if column == 0 else "", fontsize=8)
+        ax.set_title(condition if row == 0 else "", fontsize=9)
+        ax.text(0.02, 0.98, f"n={in_stratum.sum():,}", transform=ax.transAxes,
+                va="top", ha="left", fontsize=7)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+colorbar = fig.colorbar(points, ax=axes, location="right", shrink=0.35, pad=0.02, aspect=25)
 colorbar_ticks = np.linspace(txn1_low, txn1_high, 3)
 colorbar.set_ticks(colorbar_ticks, labels=[f"{tick:.2f}" for tick in colorbar_ticks])
 colorbar.ax.tick_params(labelsize=7)
@@ -665,8 +695,6 @@ plt.close(fig)
 
 ```{python}
 #| label: txn1-violin-stratified-wr-joyal
-#| fig-width: 9
-#| fig-height: 5.0
 cell_type_order = list(wr_joyal.obs["cell_type"].cat.categories)
 condition_order = list(wr_joyal.obs["condition"].cat.categories)
 timepoints = list(wr_joyal.obs["timepoint"].cat.categories)
@@ -675,7 +703,7 @@ timepoints = list(wr_joyal.obs["timepoint"].cat.categories)
 # type's slot, so the comparison is a glance rather than a jump between figures. Timepoint is
 # the facet, which leaves the interaction readable down a column.
 fig, axes = plt.subplots(len(timepoints), 1, squeeze=False, sharex=True, sharey=True,
-                         constrained_layout=True)
+                         figsize=(9, 5.0), constrained_layout=True)
 for row, (ax, timepoint) in enumerate(zip(axes.flat, timepoints)):
     at_timepoint = txn1_df[txn1_df["timepoint"] == timepoint]
     sns.violinplot(data=at_timepoint, x="cell_type", y="TXN1", order=cell_type_order,
@@ -686,6 +714,8 @@ for row, (ax, timepoint) in enumerate(zip(axes.flat, timepoints)):
     ax.set_ylabel(f"Txn1 — {timepoint}", fontsize=8)
     ax.set_xlabel("")
     ax.tick_params(axis="y", labelsize=6)
+    ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+    ax.set_axisbelow(True)
     sns.despine(ax=ax)
 
 axes[0][0].legend(title="", fontsize=7, frameon=False,
@@ -698,27 +728,39 @@ plt.show()
 plt.close(fig)
 ```
 
-## Txn1 by cell type and timepoint
+## Txn1 by cell type across the design, grouped by timepoint
 
 ```{python}
-#| label: txn1-violin-timepoint-wr-joyal
-#| fig-width: 9
-#| fig-height: 3.5
+#| label: txn1-violin-stratified-by-condition-wr-joyal
 timepoint_palette = dict(zip(wr_joyal.obs["timepoint"].cat.categories,
                              wr_joyal.uns["timepoint_colors"]))
 
-fig, ax = plt.subplots(constrained_layout=True)
-sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", hue="timepoint",
-               palette=timepoint_palette, cut=0, density_norm="width", inner="box",
-               inner_kws=violin_inner_kws, linewidth=0.5, ax=ax)
-ax.set_xlabel("")
-ax.set_ylabel("Txn1 (log1p)", fontsize=9)
-ax.tick_params(axis="x", labelrotation=45, labelsize=8)
-ax.tick_params(axis="y", labelsize=8)
-for label in ax.get_xticklabels():
+# the same data with the roles swapped: P14 and P17 side by side within each cell type, and
+# condition as the facet. Reading down a column here compares the two timepoints within a
+# condition, where the plot above compares the two conditions within a timepoint.
+fig, axes = plt.subplots(len(condition_order), 1, squeeze=False, sharex=True, sharey=True,
+                         figsize=(9, 5.0), constrained_layout=True)
+for row, (ax, condition) in enumerate(zip(axes.flat, condition_order)):
+    in_condition = txn1_df[txn1_df["condition"] == condition]
+    sns.violinplot(data=in_condition, x="cell_type", y="TXN1", order=cell_type_order,
+                   hue="timepoint", hue_order=timepoints, palette=timepoint_palette,
+                   gap=0.1, cut=0, density_norm="width", inner="box",
+                   inner_kws=violin_inner_kws, linewidth=0.5, saturation=1,
+                   legend=(row == 0), ax=ax)
+    ax.set_ylabel(f"Txn1 — {condition}", fontsize=8)
+    ax.set_xlabel("")
+    ax.tick_params(axis="y", labelsize=6)
+    ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+    ax.set_axisbelow(True)
+    sns.despine(ax=ax)
+
+axes[0][0].legend(title="", fontsize=7, frameon=False,
+                  loc="center left", bbox_to_anchor=(1.0, 0.5))
+axes[-1][0].tick_params(axis="x", labelrotation=45, labelsize=8)
+for label in axes[-1][0].get_xticklabels():
     label.set_ha("right")
-ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
 
 plt.show()
 plt.close(fig)
 ```
+
