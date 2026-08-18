@@ -295,7 +295,16 @@ for ax, (qc_key, qc_label) in zip(axes.flat, qc_metrics.items()):
     # own sub-slot and every violin is drawn a twentieth of its slot wide, off its tick
     sns.violinplot(data=qc_df, x=ranked_key, y=qc_key, hue=ranked_key, palette=cluster_palette,
                    legend=False, dodge=False, cut=0, density_norm="width", inner="box",
-                   inner_kws=violin_inner_kws, linewidth=0.5, ax=ax)
+                   inner_kws=violin_inner_kws, linewidth=0.5, saturation=1, ax=ax)
+
+    # seaborn colours the bodies in an order that does not follow the x positions when hue
+    # repeats x, so each is recoloured from the cluster it actually sits under. The order
+    # comes off the categorical rather than the tick labels, which are empty on a shared axis.
+    cluster_order = list(wr_joyal.obs[ranked_key].cat.categories)
+    for body in ax.collections:
+        extents = body.get_paths()[0].get_extents()
+        body.set_facecolor(cluster_palette[cluster_order[round((extents.x0 + extents.x1) / 2)]])
+
     ax.set_ylabel(qc_label, fontsize=7)
     ax.set_xlabel("")
     ax.tick_params(axis="y", labelsize=6)
@@ -356,7 +365,13 @@ for start in range(0, len(score_keys), 6):
         sns.violinplot(data=score_df, x=ranked_key, y=score_key, hue=ranked_key,
                        palette=cluster_palette, legend=False, dodge=False, cut=0,
                        density_norm="width", inner="box", inner_kws=violin_inner_kws,
-                       linewidth=0.5, ax=ax)
+                       linewidth=0.5, saturation=1, ax=ax)
+
+        cluster_order = list(wr_joyal.obs[ranked_key].cat.categories)
+        for body in ax.collections:
+            extents = body.get_paths()[0].get_extents()
+            body.set_facecolor(cluster_palette[cluster_order[round((extents.x0 + extents.x1) / 2)]])
+
         ax.set_ylabel(f"{cell_type.replace('_', ' ')} score", fontsize=7)
         ax.set_xlabel("")
         ax.tick_params(axis="y", labelsize=6)
@@ -463,6 +478,246 @@ for ax, (title, matrix) in zip(axes.flat, score_normalizations.items()):
     ax.tick_params(axis="y", labelrotation=0, labelsize=7)
     for label in ax.get_xticklabels():
         label.set_ha("right")
+
+plt.show()
+plt.close(fig)
+```
+
+::: {.content-visible when-format="html"}
+
+## Preliminary cell types
+
+```{python}
+#| label: annotate-clusters-wr-joyal
+cluster_calls = mean_scores.idxmax(axis=1)
+
+# clusters the marker scores get wrong, corrected by hand after reading the heatmap and the
+# dotplot above, e.g. {"7": "Pericytes"}. These are the calls a human made rather than the
+# panel; everything not listed keeps its argmax.
+cluster_call_overrides = {}
+cluster_calls.update(pd.Series(cluster_call_overrides))
+
+wr_joyal.obs["cell_type"] = wr_joyal.obs[ranked_key].map(cluster_calls).astype("category")
+
+# keyed on every type in the panel rather than only the ones called, so a cell type keeps its
+# colour whatever a given resolution happens to find
+cell_type_palette = dict(zip(sorted(mean_scores.columns), sc.pl.palettes.default_20))
+wr_joyal.uns["cell_type_colors"] = [
+    cell_type_palette[cell_type] for cell_type in wr_joyal.obs["cell_type"].cat.categories
+]
+
+pd.DataFrame({
+    "cell_type": cluster_calls,
+    "cells": wr_joyal.obs[ranked_key].value_counts(),
+    "top score": mean_scores.max(axis=1).round(3),
+})
+```
+
+:::
+
+## Preliminary cell types on the UMAP
+
+```{python}
+#| label: umap-cell-types-wr-joyal
+#| fig-width: 6.5
+#| fig-height: 4.3
+ax = sc.pl.umap(
+    wr_joyal[draw_order],
+    color="cell_type",
+    frameon=True,
+    show=False,
+)
+ax.set_aspect("equal", adjustable="datalim")
+plt.show()
+```
+
+## Txn1 on the UMAP
+
+```{python}
+#| label: umap-txn1-wr-joyal
+#| fig-width: 4.3
+#| fig-height: 3.9
+fig, axs = plt.subplots(2, 1, height_ratios=[1, 0.22], constrained_layout=True)
+
+sc.pl.umap(wr_joyal, color="TXN1", ax=axs[0], frameon=True, colorbar_loc=None, show=False)
+axs[0].set_aspect("equal", adjustable="datalim")
+
+axs[1].axis("off")
+colorbar_ax = axs[1].inset_axes([0.325, 0.82, 0.35, 0.18])
+colorbar_ax.set_in_layout(False)
+colorbar = fig.colorbar(axs[0].collections[0], cax=colorbar_ax, orientation="horizontal")
+
+txn1_low, txn1_high = axs[0].collections[0].get_clim()
+colorbar_ticks = np.linspace(txn1_low, txn1_high, 3)
+colorbar.set_ticks(colorbar_ticks, labels=[f"{tick:.2f}" for tick in colorbar_ticks])
+colorbar.ax.tick_params(labelsize=7)
+
+plt.show()
+plt.close(fig)
+```
+
+## Txn1 by cell type
+
+```{python}
+#| label: txn1-violin-celltype-wr-joyal
+#| fig-width: 9
+#| fig-height: 3.5
+txn1_df = sc.get.obs_df(wr_joyal, keys=["TXN1", "cell_type", "condition", "timepoint"])
+
+fig, ax = plt.subplots(constrained_layout=True)
+sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", hue="cell_type",
+               palette=cell_type_palette, legend=True, dodge=False, cut=0,
+               density_norm="width", inner="box", inner_kws=violin_inner_kws,
+               linewidth=0.5, saturation=1, ax=ax)
+
+# with hue repeating x and dodge off, seaborn hands the bodies their colours in an order
+# that does not follow the x positions — the legend ends up right and the violins wrong.
+# Recolour each body from the cell type it actually sits under.
+cell_type_order = list(wr_joyal.obs["cell_type"].cat.categories)
+for body in ax.collections:
+    extents = body.get_paths()[0].get_extents()
+    body.set_facecolor(cell_type_palette[cell_type_order[round((extents.x0 + extents.x1) / 2)]])
+
+ax.set_xlabel("")
+ax.set_ylabel("Txn1 (log1p)", fontsize=9)
+ax.tick_params(axis="x", labelrotation=45, labelsize=8)
+ax.tick_params(axis="y", labelsize=8)
+for label in ax.get_xticklabels():
+    label.set_ha("right")
+ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
+
+plt.show()
+plt.close(fig)
+```
+
+## Txn1 by cell type and condition
+
+```{python}
+#| label: txn1-violin-condition-wr-joyal
+#| fig-width: 9
+#| fig-height: 3.5
+condition_palette = dict(zip(wr_joyal.obs["condition"].cat.categories,
+                             wr_joyal.uns["condition_colors"]))
+
+fig, ax = plt.subplots(constrained_layout=True)
+sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", hue="condition",
+               palette=condition_palette, cut=0, density_norm="width", inner="box",
+               inner_kws=violin_inner_kws, linewidth=0.5, ax=ax)
+ax.set_xlabel("")
+ax.set_ylabel("Txn1 (log1p)", fontsize=9)
+ax.tick_params(axis="x", labelrotation=45, labelsize=8)
+ax.tick_params(axis="y", labelsize=8)
+for label in ax.get_xticklabels():
+    label.set_ha("right")
+ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
+
+plt.show()
+plt.close(fig)
+```
+
+## Txn1 across the design
+
+```{python}
+#| label: umap-txn1-stratified-wr-joyal
+#| fig-width: 9
+#| fig-height: 3.0
+wr_joyal.obs["stratum"] = pd.Categorical(
+    wr_joyal.obs["condition"].astype(str) + " " + wr_joyal.obs["timepoint"].astype(str),
+    categories=["NORM P14", "NORM P17", "OIR P14", "OIR P17"],
+)
+strata = list(wr_joyal.obs["stratum"].cat.categories)
+
+# one square window covering the whole embedding, applied to every panel, so a cell sits in
+# the same place in all four and the panels can be read against each other
+umap_coords = wr_joyal.obsm["X_umap"]
+umap_center = umap_coords.mean(axis=0)
+umap_half = 0.55 * (umap_coords.max(axis=0) - umap_coords.min(axis=0)).max()
+
+# one scale across the four panels, so brightness means the same thing in each
+txn1 = sc.get.obs_df(wr_joyal, keys=["TXN1"])["TXN1"]
+txn1_low, txn1_high = txn1.min(), txn1.max()
+
+fig, axs = plt.subplots(2, len(strata), height_ratios=[1, 0.22], constrained_layout=True)
+for ax, stratum in zip(axs[0], strata):
+    in_stratum = wr_joyal.obs["stratum"] == stratum
+    sc.pl.umap(wr_joyal[in_stratum], color="TXN1", ax=ax, frameon=True, colorbar_loc=None,
+               vmin=txn1_low, vmax=txn1_high, title=stratum, show=False)
+    ax.set_xlim(umap_center[0] - umap_half, umap_center[0] + umap_half)
+    ax.set_ylim(umap_center[1] - umap_half, umap_center[1] + umap_half)
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_title(f"{stratum}  (n={in_stratum.sum():,})", fontsize=9)
+
+for bar_ax in axs[1]:
+    bar_ax.axis("off")
+
+colorbar_ax = axs[1][1].inset_axes([0.325, 0.82, 1.35, 0.18])
+colorbar_ax.set_in_layout(False)
+colorbar = fig.colorbar(axs[0][0].collections[0], cax=colorbar_ax, orientation="horizontal")
+colorbar_ticks = np.linspace(txn1_low, txn1_high, 3)
+colorbar.set_ticks(colorbar_ticks, labels=[f"{tick:.2f}" for tick in colorbar_ticks])
+colorbar.ax.tick_params(labelsize=7)
+
+plt.show()
+plt.close(fig)
+```
+
+## Txn1 by cell type across the design
+
+```{python}
+#| label: txn1-violin-stratified-wr-joyal
+#| fig-width: 9
+#| fig-height: 5.0
+cell_type_order = list(wr_joyal.obs["cell_type"].cat.categories)
+condition_order = list(wr_joyal.obs["condition"].cat.categories)
+timepoints = list(wr_joyal.obs["timepoint"].cat.categories)
+
+# grouped violins rather than four panels: NORM and OIR sit side by side within each cell
+# type's slot, so the comparison is a glance rather than a jump between figures. Timepoint is
+# the facet, which leaves the interaction readable down a column.
+fig, axes = plt.subplots(len(timepoints), 1, squeeze=False, sharex=True, sharey=True,
+                         constrained_layout=True)
+for row, (ax, timepoint) in enumerate(zip(axes.flat, timepoints)):
+    at_timepoint = txn1_df[txn1_df["timepoint"] == timepoint]
+    sns.violinplot(data=at_timepoint, x="cell_type", y="TXN1", order=cell_type_order,
+                   hue="condition", hue_order=condition_order, palette=condition_palette,
+                   gap=0.1, cut=0, density_norm="width", inner="box",
+                   inner_kws=violin_inner_kws, linewidth=0.5, saturation=1,
+                   legend=(row == 0), ax=ax)
+    ax.set_ylabel(f"Txn1 — {timepoint}", fontsize=8)
+    ax.set_xlabel("")
+    ax.tick_params(axis="y", labelsize=6)
+    sns.despine(ax=ax)
+
+axes[0][0].legend(title="", fontsize=7, frameon=False,
+                  loc="center left", bbox_to_anchor=(1.0, 0.5))
+axes[-1][0].tick_params(axis="x", labelrotation=45, labelsize=8)
+for label in axes[-1][0].get_xticklabels():
+    label.set_ha("right")
+
+plt.show()
+plt.close(fig)
+```
+
+## Txn1 by cell type and timepoint
+
+```{python}
+#| label: txn1-violin-timepoint-wr-joyal
+#| fig-width: 9
+#| fig-height: 3.5
+timepoint_palette = dict(zip(wr_joyal.obs["timepoint"].cat.categories,
+                             wr_joyal.uns["timepoint_colors"]))
+
+fig, ax = plt.subplots(constrained_layout=True)
+sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", hue="timepoint",
+               palette=timepoint_palette, cut=0, density_norm="width", inner="box",
+               inner_kws=violin_inner_kws, linewidth=0.5, ax=ax)
+ax.set_xlabel("")
+ax.set_ylabel("Txn1 (log1p)", fontsize=9)
+ax.tick_params(axis="x", labelrotation=45, labelsize=8)
+ax.tick_params(axis="y", labelsize=8)
+for label in ax.get_xticklabels():
+    label.set_ha("right")
+ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
 
 plt.show()
 plt.close(fig)
