@@ -6,8 +6,10 @@ format:
   html:
     toc: true
     toc-depth: 3
-    code-fold: true
     embed-resources: true
+  pptx:
+    slide-level: 2
+    echo: false
 jupyter: oir-analysis-3
 ---
 
@@ -17,10 +19,25 @@ from pathlib import Path
 from urllib.request import urlretrieve
 
 import anndata as ad
+import matplotlib.pyplot as plt
 import pandas as pd
 import scanpy as sc
 from scipy.sparse import csr_matrix
+
+plt.rcParams.update({
+    "figure.dpi": 200,
+    "savefig.dpi": 200,
+    "font.size": 12,
+    "axes.labelsize": 12,
+    "axes.titlesize": 13,
+    "xtick.labelsize": 10.5,
+    "ytick.labelsize": 10.5,
+    "legend.fontsize": 11,
+    "figure.titlesize": 14,
+})
 ```
+
+## Download
 
 ```{python}
 #| label: download
@@ -36,6 +53,8 @@ if not dge_path.exists():
 
 print(f"{dge_path.name}  ({dge_path.stat().st_size / 1e6:.0f} MB)")
 ```
+
+## Build the AnnData
 
 ```{python}
 #| label: create-anndata
@@ -63,6 +82,8 @@ else:
 
 adata
 ```
+
+## Cluster WR_Joyal
 
 ```{python}
 #| label: cluster-wr-joyal
@@ -108,23 +129,26 @@ else:
 wr_joyal
 ```
 
+## Leiden sweep
+
 ```{python}
 #| label: umap-sweep-wr-joyal
-#| fig-width: 12
-#| fig-height: 16
-# TODO: eleven panels in one grid may be too small to judge; consider splitting into
-# several plots of a few resolutions each.
+#| fig-width: 3.0
+#| fig-height: 3.0
 resolution_keys = [column for column in wr_joyal.obs.columns if column.endswith("_v0")]
 
-sc.pl.umap(
-    wr_joyal,
-    color=resolution_keys,
-    ncols=3,
-    legend_loc="on data",
-    legend_fontsize=6,
-    frameon=False,
-)
+for start in range(0, len(resolution_keys), 3):
+    sc.pl.umap(
+        wr_joyal,
+        color=resolution_keys[start:start + 3],
+        ncols=3,
+        legend_loc="on data",
+        legend_fontsize=9,
+        frameon=False,
+    )
 ```
+
+## Chosen resolution
 
 ```{python}
 #| label: choose-resolution-wr-joyal
@@ -148,10 +172,12 @@ print(f"{ranked_key}: {wr_joyal.obs[ranked_key].nunique()} clusters")
 wr_joyal.obs[ranked_key].value_counts()
 ```
 
+## Clusters on the UMAP
+
 ```{python}
 #| label: umap-clusters-wr-joyal
-#| fig-width: 7
-#| fig-height: 6
+#| fig-width: 5.5
+#| fig-height: 4.3
 sc.pl.umap(
     wr_joyal,
     color=ranked_key,
@@ -161,22 +187,28 @@ sc.pl.umap(
 )
 ```
 
+## QC metrics
+
 ```{python}
 #| label: qc-violin-wr-joyal
-#| fig-width: 12
+#| fig-width: 1.8
 #| fig-height: 4
 qc_keys = ["n_genes_by_log1p", "total_log1p", "pct_log1p_mt", "pct_log1p_ribo", "pct_log1p_hb"]
 
 sc.pl.violin(wr_joyal, qc_keys, multi_panel=True, stripplot=False)
 ```
 
+## QC metrics by cluster
+
 ```{python}
 #| label: qc-violin-by-cluster-wr-joyal
-#| fig-width: 12
-#| fig-height: 18
+#| fig-width: 9
+#| fig-height: 3.5
 for qc_key in qc_keys:
     sc.pl.violin(wr_joyal, qc_key, groupby=ranked_key, stripplot=False, rotation=90)
 ```
+
+## Marker scores
 
 ```{python}
 #| label: score-markers-wr-joyal
@@ -205,24 +237,30 @@ for cell_type, genes in retina_markers.items():
     print(f"{cell_type}: {len(present)}/{len(genes)} markers")
 ```
 
+## Marker scores by cluster
+
 ```{python}
 #| label: score-violin-by-cluster-wr-joyal
-#| fig-width: 12
-#| fig-height: 40
+#| fig-width: 9
+#| fig-height: 3.5
 for score_key in score_keys:
     sc.pl.violin(wr_joyal, score_key, groupby=ranked_key, stripplot=False, rotation=90)
 ```
 
+## Marker scores on the UMAP
+
 ```{python}
 #| label: umap-scores-wr-joyal
-#| fig-width: 12
-#| fig-height: 16
+#| fig-width: 2.8
+#| fig-height: 2.8
 sc.pl.umap(wr_joyal, color=score_keys, ncols=3, frameon=False)
 ```
 
+## Marker genes by cluster
+
 ```{python}
 #| label: dotplot-markers-wr-joyal
-#| fig-width: 16
-#| fig-height: 8
+#| fig-width: 9
+#| fig-height: 4.3
 sc.pl.dotplot(wr_joyal, markers_present, groupby=ranked_key, standard_scale="var")
 ```

@@ -10,8 +10,9 @@ data/
 *_files/
 *.quarto_ipynb
 
-# The rendered report is an output of the .qmd, not a source.
+# The rendered report and deck are outputs of the .qmd, not sources.
 *.html
+*.pptx
 
 # Python
 __pycache__/
