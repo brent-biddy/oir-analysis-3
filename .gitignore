@@ -1,0 +1,22 @@
+# Data — what came from outside. Reproducible by re-rendering the download section.
+data/
+
+# Objects the document writes as it goes, and re-reads instead of recomputing.
+*.h5ad
+
+# Quarto
+/.quarto/
+/_freeze/
+*_files/
+*.quarto_ipynb
+
+# The rendered report is an output of the .qmd, not a source.
+*.html
+
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# OS
+.DS_Store

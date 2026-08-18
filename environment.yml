@@ -1,0 +1,35 @@
+# Conda env for rendering the analysis document.
+#
+# The env NAME is what the `jupyter:` line in oir_analysis.qmd pins to. Quarto can only honour
+# that pin if it is run by a python that can see the kernel, so the env must be registered:
+#
+#   conda env create -f environment.yml
+#   conda activate oir-analysis-3
+#   python -m ipykernel install --user --name oir-analysis-3
+#
+# Quarto itself is not listed: it is installed system-wide and rendering through a conda copy
+# would shadow it.
+name: oir-analysis-3
+
+channels:
+  - conda-forge
+  - bioconda
+
+dependencies:
+  - python=3.12
+  - anndata
+  - scanpy
+  - scipy
+  - numpy
+  - pandas
+  # sc.tl.leiden is called with flavor="igraph", which uses python-igraph directly —
+  # leidenalg is the other flavor's backend and is deliberately not installed.
+  - python-igraph
+  - matplotlib
+  - seaborn
+  # DataFrame.to_markdown() is what renders the tables in the report.
+  - tabulate
+  # Quarto renders through a Jupyter kernel.
+  - ipykernel
+  - nbformat
+  - nbclient

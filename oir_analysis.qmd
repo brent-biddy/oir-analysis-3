@@ -1,0 +1,75 @@
+---
+title: "OIR retina scRNA-seq"
+author: "Brent Biddy"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    embed-resources: true
+jupyter: oir-analysis-3
+---
+
+```{python}
+#| label: setup
+from pathlib import Path
+from urllib.request import urlretrieve
+
+import anndata as ad
+import pandas as pd
+import scanpy as sc
+from scipy.sparse import csr_matrix
+```
+
+```{python}
+#| label: download
+dge_url = (
+    "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE150nnn/GSE150703/suppl/"
+    "GSE150703_retina_NORM_OIR_P14_P17_C57_WR_CD73FT_noamg_normalizedUMI_Count_DGEmatrix.txt.gz"
+)
+dge_path = Path("data/raw") / Path(dge_url).name
+dge_path.parent.mkdir(parents=True, exist_ok=True)
+
+if not dge_path.exists():
+    urlretrieve(dge_url, dge_path)
+
+print(f"{dge_path.name}  ({dge_path.stat().st_size / 1e6:.0f} MB)")
+```
+
+```{python}
+#| label: create-anndata
+adata_path = Path("data/processed/GSE150703_adata.h5ad")
+adata_path.parent.mkdir(parents=True, exist_ok=True)
+
+if adata_path.exists():
+    adata = sc.read_h5ad(adata_path)
+else:
+    counts = pd.read_csv(dge_path, sep="\t", index_col=0).T
+
+    adata = ad.AnnData(X=csr_matrix(counts.values))
+    adata.obs_names = counts.index.astype(str)
+    adata.var_names = counts.columns.astype(str)
+
+    fields = pd.Series(adata.obs_names).str.split("_", expand=True)
+    adata.obs["condition"] = pd.Categorical(fields[0].values)
+    adata.obs["timepoint"] = pd.Categorical(fields[1].values)
+    adata.obs["sort"] = pd.Categorical(fields[2].values)
+    adata.obs["lab"] = pd.Categorical(fields[3].values)
+    adata.obs["replicate"] = pd.Categorical(fields[4].values)
+    adata.obs["batch"] = pd.Categorical(fields[2].str.cat(fields[3], sep="_").values)
+
+    adata.write_h5ad(adata_path)
+
+adata
+```
+
+```{python}
+#| label: subset-wr-joyal
+wr_joyal = adata[adata.obs["batch"] == "WR_Joyal"].copy()
+
+for column in ["condition", "timepoint", "sort", "lab", "replicate", "batch"]:
+    wr_joyal.obs[column] = wr_joyal.obs[column].cat.remove_unused_categories()
+
+wr_joyal
+```
