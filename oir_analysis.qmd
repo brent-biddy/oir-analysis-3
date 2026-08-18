@@ -24,6 +24,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import scanpy as sc
+import seaborn as sns
 from scipy.sparse import csr_matrix
 
 plt.rcParams.update({
@@ -147,6 +148,12 @@ for obs_key, palette in obs_palettes.items():
     categories = wr_joyal.obs[obs_key].cat.categories
     wr_joyal.uns[f"{obs_key}_colors"] = [palette[category] for category in categories]
 
+# cells are drawn in this order, so whatever comes last sits on top. Shuffled, because the
+# matrix order is the order cells came off the sequencer and it buries whole clusters under
+# their neighbours. To put particular clusters on top instead, sort by the cluster column:
+#   draw_order = wr_joyal.obs[ranked_key].sort_values(ascending=False).index
+draw_order = np.random.default_rng(0).permutation(wr_joyal.n_obs)
+
 resolution_keys = [column for column in wr_joyal.obs.columns if column.endswith("_v0")]
 
 for leiden_key_v0 in resolution_keys:
@@ -172,7 +179,7 @@ for start in range(0, len(resolution_keys), 3):
     fig, axs = plt.subplots(2, 3, height_ratios=[1, 0.22], constrained_layout=True)
     for ax, leiden_key_v0 in zip(axs[0], group):
         sc.pl.umap(
-            wr_joyal,
+            wr_joyal[draw_order],
             color=leiden_key_v0,
             ax=ax,
             legend_loc="on data",
@@ -231,7 +238,7 @@ wr_joyal.obs[ranked_key].value_counts()
 #| fig-width: 5.0
 #| fig-height: 4.3
 ax = sc.pl.umap(
-    wr_joyal,
+    wr_joyal[draw_order],
     color=ranked_key,
     legend_loc="on data",
     legend_fontoutline=2,
@@ -246,8 +253,8 @@ plt.show()
 
 ```{python}
 #| label: qc-violin-wr-joyal
-#| fig-width: 1.8
-#| fig-height: 4
+#| fig-width: 9
+#| fig-height: 3.0
 qc_metrics = {
     "n_genes_by_log1p": "Genes detected",
     "total_log1p": "Total expression",
@@ -255,11 +262,21 @@ qc_metrics = {
     "pct_log1p_ribo": "% ribosomal",
     "pct_log1p_hb": "% hemoglobin",
 }
+violin_inner_kws = {"box_width": 2, "whis_width": 1, "marker": "o",
+                    "markersize": 3.0, "markeredgecolor": "white"}
 
-grid = sc.pl.violin(wr_joyal, list(qc_metrics), multi_panel=True, stripplot=False, show=False)
-for ax, qc_label in zip(grid.axes.flat, qc_metrics.values()):
-    ax.set_ylabel(qc_label)
+qc_df = sc.get.obs_df(wr_joyal, keys=[ranked_key] + list(qc_metrics))
+batch_color = wr_joyal.uns["batch_colors"][0]
+
+fig, axes = plt.subplots(1, len(qc_metrics), squeeze=False, constrained_layout=True)
+for ax, (qc_key, qc_label) in zip(axes.flat, qc_metrics.items()):
+    sns.violinplot(data=qc_df, y=qc_key, color=batch_color, cut=0, density_norm="width",
+                   inner="box", inner_kws=violin_inner_kws, linewidth=0.5, ax=ax)
+    ax.set_ylabel(qc_label, fontsize=9)
+    ax.tick_params(axis="y", labelsize=8)
+
 plt.show()
+plt.close(fig)
 ```
 
 ## QC metrics by cluster
@@ -267,12 +284,26 @@ plt.show()
 ```{python}
 #| label: qc-violin-by-cluster-wr-joyal
 #| fig-width: 9
-#| fig-height: 3.5
-for qc_key, qc_label in qc_metrics.items():
-    ax = sc.pl.violin(wr_joyal, qc_key, groupby=ranked_key, stripplot=False, rotation=90, show=False)
-    ax.set_ylabel(qc_label)
-    ax.set_xlabel("Cluster")
-    plt.show()
+#| fig-height: 4.3
+# only scanpy reads the _colors entry out of uns, so the palette is handed to seaborn
+# explicitly — otherwise a cluster changes color between the UMAP and these violins
+cluster_palette = dict(zip(wr_joyal.obs[ranked_key].cat.categories, wr_joyal.uns[f"{ranked_key}_colors"]))
+
+fig, axes = plt.subplots(len(qc_metrics), 1, squeeze=False, sharex=True, constrained_layout=True)
+for ax, (qc_key, qc_label) in zip(axes.flat, qc_metrics.items()):
+    # dodge=False because hue repeats x: left on, seaborn gives each of the 21 clusters its
+    # own sub-slot and every violin is drawn a twentieth of its slot wide, off its tick
+    sns.violinplot(data=qc_df, x=ranked_key, y=qc_key, hue=ranked_key, palette=cluster_palette,
+                   legend=False, dodge=False, cut=0, density_norm="width", inner="box",
+                   inner_kws=violin_inner_kws, linewidth=0.5, ax=ax)
+    ax.set_ylabel(qc_label, fontsize=7)
+    ax.set_xlabel("")
+    ax.tick_params(axis="y", labelsize=6)
+
+axes[-1][0].set_xlabel("Cluster", fontsize=9)
+axes[-1][0].tick_params(axis="x", labelsize=8)
+plt.show()
+plt.close(fig)
 ```
 
 ::: {.content-visible when-format="html"}
@@ -313,12 +344,27 @@ for cell_type, genes in retina_markers.items():
 ```{python}
 #| label: score-violin-by-cluster-wr-joyal
 #| fig-width: 9
-#| fig-height: 3.5
-for cell_type, score_key in zip(retina_markers, score_keys):
-    ax = sc.pl.violin(wr_joyal, score_key, groupby=ranked_key, stripplot=False, rotation=90, show=False)
-    ax.set_ylabel(f"{cell_type.replace('_', ' ')} score")
-    ax.set_xlabel("Cluster")
+#| fig-height: 4.3
+score_df = sc.get.obs_df(wr_joyal, keys=[ranked_key] + score_keys)
+
+for start in range(0, len(score_keys), 6):
+    group = score_keys[start:start + 6]
+    group_types = list(retina_markers)[start:start + 6]
+
+    fig, axes = plt.subplots(len(group), 1, squeeze=False, sharex=True, constrained_layout=True)
+    for ax, score_key, cell_type in zip(axes.flat, group, group_types):
+        sns.violinplot(data=score_df, x=ranked_key, y=score_key, hue=ranked_key,
+                       palette=cluster_palette, legend=False, dodge=False, cut=0,
+                       density_norm="width", inner="box", inner_kws=violin_inner_kws,
+                       linewidth=0.5, ax=ax)
+        ax.set_ylabel(f"{cell_type.replace('_', ' ')} score", fontsize=7)
+        ax.set_xlabel("")
+        ax.tick_params(axis="y", labelsize=6)
+
+    axes[-1][0].set_xlabel("Cluster", fontsize=9)
+    axes[-1][0].tick_params(axis="x", labelsize=8)
     plt.show()
+    plt.close(fig)
 ```
 
 ## Marker scores on the UMAP
@@ -345,9 +391,16 @@ for start in range(0, len(score_keys), 3):
         # the strip reserves the space; the colorbar drawn inside it is excluded from the
         # layout so its tick labels cannot push the panel around
         bar_ax.axis("off")
-        colorbar_ax = bar_ax.inset_axes([0.325, 0.55, 0.35, 0.45])
+        colorbar_ax = bar_ax.inset_axes([0.325, 0.82, 0.35, 0.18])
         colorbar_ax.set_in_layout(False)
-        fig.colorbar(ax.collections[0], cax=colorbar_ax, orientation="horizontal")
+        colorbar = fig.colorbar(ax.collections[0], cax=colorbar_ax, orientation="horizontal")
+
+        # placed explicitly at the ends and middle: the automatic locator picks its own round
+        # numbers per score, so the tick count and positions differ from panel to panel
+        score_low, score_high = ax.collections[0].get_clim()
+        colorbar_ticks = np.linspace(score_low, score_high, 3)
+        colorbar.set_ticks(colorbar_ticks, labels=[f"{tick:.2f}" for tick in colorbar_ticks])
+        colorbar.ax.tick_params(labelsize=7)
 
     for empty_ax in axs[0][len(group):]:
         fig.delaxes(empty_ax)
@@ -373,17 +426,44 @@ sc.pl.dotplot(wr_joyal, markers_present, groupby=ranked_key, standard_scale="var
 #| label: heatmap-scores-wr-joyal
 #| fig-width: 9
 #| fig-height: 4.3
-cell_type_labels = [cell_type.replace("_", " ") for cell_type in retina_markers]
+mean_scores = score_df.groupby(ranked_key, observed=True)[score_keys].mean()
+mean_scores.columns = [cell_type.replace("_", " ") for cell_type in retina_markers]
 
-heatmap = sc.pl.matrixplot(
-    wr_joyal,
-    score_keys,
-    groupby=ranked_key,
-    standard_scale="var",
-    cmap="viridis",
-    colorbar_title="mean score\n(scaled)",
-    show=False,
-)
-heatmap["mainplot_ax"].set_xticklabels(cell_type_labels, rotation=90)
+# the same matrix three ways, because they answer different questions: the raw means show
+# magnitude, scaling down a column asks "which cluster is most this cell type", and scaling
+# across a row asks "which cell type best fits this cluster" — the annotation question
+scaled_by_type = (mean_scores - mean_scores.min()) / (mean_scores.max() - mean_scores.min())
+row_range = mean_scores.max(axis=1) - mean_scores.min(axis=1)
+scaled_by_cluster = mean_scores.sub(mean_scores.min(axis=1), axis=0).div(row_range, axis=0)
+
+score_normalizations = {
+    "Mean score": mean_scores,
+    "Scaled per cell type": scaled_by_type,
+    "Scaled per cluster": scaled_by_cluster,
+}
+
+# walk the clusters in order and take each one's best cell type; a type already placed is
+# skipped, and any type no cluster leads with is appended. The matches then read as a
+# diagonal rather than being scattered across the panel.
+column_order = []
+for cluster in scaled_by_cluster.index:
+    best = scaled_by_cluster.loc[cluster].idxmax()
+    if best not in column_order:
+        column_order.append(best)
+column_order += [c for c in scaled_by_cluster.columns if c not in column_order]
+
+fig, axes = plt.subplots(1, len(score_normalizations), squeeze=False, constrained_layout=True)
+for ax, (title, matrix) in zip(axes.flat, score_normalizations.items()):
+    sns.heatmap(matrix[column_order], cmap="viridis", linewidths=0.5, linecolor="white",
+                cbar_kws={"shrink": 0.6, "pad": 0.02}, ax=ax)
+    ax.set_title(title, fontsize=9)
+    ax.set_xlabel("Cell type", fontsize=8)
+    ax.set_ylabel("Cluster", fontsize=8)
+    ax.tick_params(axis="x", labelrotation=45, labelsize=7)
+    ax.tick_params(axis="y", labelrotation=0, labelsize=7)
+    for label in ax.get_xticklabels():
+        label.set_ha("right")
+
 plt.show()
+plt.close(fig)
 ```
