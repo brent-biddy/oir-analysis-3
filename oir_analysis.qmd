@@ -88,8 +88,6 @@ else:
             resolution=resolution,
             key_added=f"leiden_res_{resolution:.2f}",
             flavor="igraph",
-            n_iterations=2,
-            directed=False,
             random_state=0,
         )
 
@@ -102,6 +100,8 @@ wr_joyal
 #| label: umap-sweep-wr-joyal
 #| fig-width: 12
 #| fig-height: 16
+# TODO: eleven panels in one grid may be too small to judge; consider splitting into
+# several plots of a few resolutions each.
 resolution_keys = [column for column in wr_joyal.obs.columns if column.startswith("leiden_res_")]
 
 sc.pl.umap(
@@ -112,4 +112,15 @@ sc.pl.umap(
     legend_fontsize=6,
     frameon=False,
 )
+```
+
+```{python}
+#| label: choose-resolution-wr-joyal
+wr_joyal_resolution = 1.0
+
+chosen_key = f"leiden_res_{wr_joyal_resolution:.2f}"
+wr_joyal.obs["cluster"] = wr_joyal.obs[chosen_key]
+
+print(f"{chosen_key}: {wr_joyal.obs['cluster'].nunique()} clusters")
+wr_joyal.obs["cluster"].value_counts()
 ```
