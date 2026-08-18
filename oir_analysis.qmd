@@ -135,3 +135,16 @@ wr_joyal.obs[ranked_key] = (
 print(f"{ranked_key}: {wr_joyal.obs[ranked_key].nunique()} clusters")
 wr_joyal.obs[ranked_key].value_counts()
 ```
+
+```{python}
+#| label: umap-clusters-wr-joyal
+#| fig-width: 7
+#| fig-height: 6
+sc.pl.umap(
+    wr_joyal,
+    color=ranked_key,
+    legend_loc="on data",
+    legend_fontoutline=2,
+    frameon=False,
+)
+```
