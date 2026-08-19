@@ -19,12 +19,14 @@ from pathlib import Path
 from urllib.request import urlretrieve
 
 import anndata as ad
+import h5py
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import scanpy as sc
 import seaborn as sns
+from anndata.io import read_elem
 from scipy.sparse import csr_matrix
 
 plt.rcParams.update({
@@ -46,17 +48,32 @@ plt.rcParams.update({
 
 ```{python}
 #| label: download
-dge_url = (
-    "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE150nnn/GSE150703/suppl/"
-    "GSE150703_retina_NORM_OIR_P14_P17_C57_WR_CD73FT_noamg_normalizedUMI_Count_DGEmatrix.txt.gz"
-)
-dge_path = Path("data/raw") / Path(dge_url).name
-dge_path.parent.mkdir(parents=True, exist_ok=True)
+# the counts this document analyses, and the annotated reference its cell types are called
+# against. Both are fetched once and left on disk; re-rendering re-uses them.
+source_urls = {
+    "dge": (
+        "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE150nnn/GSE150703/suppl/"
+        "GSE150703_retina_NORM_OIR_P14_P17_C57_WR_CD73FT_noamg_normalizedUMI_Count_DGEmatrix.txt.gz"
+    ),
+    "reference": (
+        "https://datasets.cellxgene.cziscience.com/"
+        "a420c2bf-feeb-48db-a6c7-71f492f23131.h5ad"
+    ),
+}
 
-if not dge_path.exists():
-    urlretrieve(dge_url, dge_path)
+raw_dir = Path("data/raw")
+raw_dir.mkdir(parents=True, exist_ok=True)
 
-print(f"{dge_path.name}  ({dge_path.stat().st_size / 1e6:.0f} MB)")
+source_paths = {}
+for source_name, source_url in source_urls.items():
+    source_path = raw_dir / Path(source_url).name
+    if not source_path.exists():
+        urlretrieve(source_url, source_path)
+    source_paths[source_name] = source_path
+    print(f"{source_name}: {source_path.name}  ({source_path.stat().st_size / 1e6:.0f} MB)")
+
+dge_path = source_paths["dge"]
+reference_path = source_paths["reference"]
 ```
 
 ## Build the AnnData
@@ -320,6 +337,162 @@ plt.close(fig)
 
 ::: {.content-visible when-format="html"}
 
+## Reference centroids
+
+```{python}
+#| label: reference-centroids
+# MRCA, the mouse retina cell atlas (330,930 cells, all of it disease-free):
+# https://doi.org/10.1016/j.isci.2024.109916. Its majorclass column is the level the calls
+# come from — twelve classes, about what 21 clusters can resolve.
+#
+# Aggregated over the whole atlas rather than its P14/P17 cells alone. That subset looks
+# like the right match for this design, but it holds no astrocytes at all, 50 RGCs, and
+# bipolar cells almost only at P17, so it cannot call several of the clusters here.
+centroid_path = Path("data/processed/MRCA_majorclass_centroids.h5ad")
+
+if centroid_path.exists():
+    reference_centroids = sc.read_h5ad(centroid_path)
+else:
+    # read_h5ad would also pull in .raw, which is a second copy of an already 9.8 GB matrix
+    # and takes the load past this machine's memory. Only the three elements the aggregation
+    # needs are read, and the indices are narrowed to int32 — they index 31,671 columns.
+    with h5py.File(reference_path) as handle:
+        reference_counts = read_elem(handle["X"])
+        reference_obs = read_elem(handle["obs"])
+        reference_var = read_elem(handle["var"])
+
+    reference_counts.indices = reference_counts.indices.astype(np.int32)
+    reference_counts.indptr = reference_counts.indptr.astype(np.int32)
+
+    reference = ad.AnnData(
+        X=reference_counts,
+        obs=reference_obs[["majorclass"]],
+        var=reference_var[["feature_name"]],
+    )
+    del reference_counts, reference_obs, reference_var
+
+    reference_centroids = sc.get.aggregate(reference, by="majorclass", func="mean")
+    reference_centroids.X = reference_centroids.layers.pop("mean")
+    del reference
+
+    # the atlas is keyed on Ensembl ids and the query on upper-cased symbols. Nine symbols
+    # answer to more than one id; those are dropped rather than merged, since there is no
+    # honest way to pick which id the query's column meant.
+    symbols = reference_centroids.var["feature_name"].astype(str).str.upper()
+    reference_centroids = reference_centroids[:, ~symbols.duplicated(keep=False).to_numpy()].copy()
+    reference_centroids.var_names = symbols[~symbols.duplicated(keep=False)].to_numpy()
+
+    reference_centroids.write_h5ad(centroid_path)
+
+reference_centroids
+```
+
+## Correlation with the reference
+
+```{python}
+#| label: correlate-reference-wr-joyal
+# correlated over the query's variable genes rather than everything shared: the
+# housekeeping bulk is near-identical in every class and only lifts all twelve correlations
+# together, flattening the differences the call is made on
+feature_genes = [
+    gene for gene in wr_joyal.var_names[wr_joyal.var["highly_variable"]]
+    if gene in reference_centroids.var_names
+]
+
+cluster_profiles = pd.DataFrame(
+    [
+        np.asarray(
+            wr_joyal[wr_joyal.obs[ranked_key] == cluster, feature_genes].X.mean(axis=0)
+        ).ravel()
+        for cluster in wr_joyal.obs[ranked_key].cat.categories
+    ],
+    index=wr_joyal.obs[ranked_key].cat.categories,
+    columns=feature_genes,
+)
+reference_profiles = pd.DataFrame(
+    reference_centroids[:, feature_genes].X,
+    index=reference_centroids.obs_names,
+    columns=feature_genes,
+)
+
+# Spearman, so a class is matched on the order it puts the genes in rather than on absolute
+# levels — the two datasets were normalized by different pipelines. Ranking the rows and
+# taking Pearson is the same thing, and does all 21 x 12 pairs in one call.
+ranked_clusters = cluster_profiles.rank(axis=1)
+ranked_reference = reference_profiles.rank(axis=1)
+reference_correlation = pd.DataFrame(
+    np.corrcoef(ranked_clusters, ranked_reference)[:len(ranked_clusters), len(ranked_clusters):],
+    index=cluster_profiles.index,
+    columns=reference_profiles.index,
+)
+
+print(f"{len(feature_genes)} of {int(wr_joyal.var['highly_variable'].sum())} "
+      f"variable genes found in the reference")
+reference_correlation.round(3)
+```
+
+:::
+
+## Correlation with the reference by cluster
+
+```{python}
+#| label: heatmap-reference-wr-joyal
+# the same matrix three ways, matching the marker heatmap. The raw correlations sit in a
+# narrow band, so the two scaled panels are what can actually be read: down a column asks
+# "which cluster is most this class", and across a row asks "which class best fits this
+# cluster" — the annotation question, and the one the calls are taken from.
+#
+# only the row scaling is a call. A column's brightest cell is the best home for that class
+# whether or not the class is present at all: RPE peaks on a rod cluster here, which says
+# where it would land rather than that it was found.
+class_range = reference_correlation.max(axis=0) - reference_correlation.min(axis=0)
+scaled_by_class = reference_correlation.sub(
+    reference_correlation.min(axis=0), axis=1
+).div(class_range, axis=1)
+
+correlation_range = reference_correlation.max(axis=1) - reference_correlation.min(axis=1)
+scaled_correlation = reference_correlation.sub(
+    reference_correlation.min(axis=1), axis=0
+).div(correlation_range, axis=0)
+
+correlation_panels = {
+    "Spearman correlation": reference_correlation,
+    "Scaled per class": scaled_by_class,
+    "Scaled per cluster": scaled_correlation,
+}
+
+# walk the clusters in order and take each one's best class; a class already placed is
+# skipped, and any class no cluster leads with is appended. The matches then read as a
+# diagonal rather than being scattered across the panel.
+class_order = []
+for cluster in scaled_correlation.index:
+    best = scaled_correlation.loc[cluster].idxmax()
+    if best not in class_order:
+        class_order.append(best)
+class_order += [name for name in scaled_correlation.columns if name not in class_order]
+
+fig, axes = plt.subplots(1, len(correlation_panels), squeeze=False, figsize=(9, 4.3),
+                         constrained_layout=True)
+for ax, (title, matrix) in zip(axes.flat, correlation_panels.items()):
+    # xticklabels/yticklabels left at "auto" thins the labels to every other one once a
+    # third panel is on the figure, which leaves half the classes unnamed
+    sns.heatmap(matrix[class_order], cmap="viridis", linewidths=0.5, linecolor="white",
+                xticklabels=True, yticklabels=True,
+                cbar_kws={"shrink": 0.6, "pad": 0.02}, ax=ax)
+    ax.set_title(title, fontsize=9)
+    ax.set_xlabel("Reference class", fontsize=8)
+    ax.set_ylabel("Cluster", fontsize=8)
+    ax.tick_params(axis="x", labelrotation=45, labelsize=7)
+    ax.tick_params(axis="y", labelrotation=0, labelsize=7)
+    for label in ax.get_xticklabels():
+        label.set_ha("right")
+
+plt.show()
+plt.close(fig)
+```
+
+::: {.content-visible when-format="html"}
+
 ## Marker scores
 
 ```{python}
@@ -471,7 +644,10 @@ column_order += [c for c in scaled_by_cluster.columns if c not in column_order]
 fig, axes = plt.subplots(1, len(score_normalizations), squeeze=False, figsize=(9, 4.3),
                          constrained_layout=True)
 for ax, (title, matrix) in zip(axes.flat, score_normalizations.items()):
+    # as on the reference heatmap: left at "auto" the labels thin to every other one across
+    # three panels, which leaves half the cell types and half the clusters unnamed
     sns.heatmap(matrix[column_order], cmap="viridis", linewidths=0.5, linecolor="white",
+                xticklabels=True, yticklabels=True,
                 cbar_kws={"shrink": 0.6, "pad": 0.02}, ax=ax)
     ax.set_title(title, fontsize=9)
     ax.set_xlabel("Cell type", fontsize=8)
@@ -491,7 +667,11 @@ plt.close(fig)
 
 ```{python}
 #| label: annotate-clusters-wr-joyal
-cluster_calls = mean_scores.idxmax(axis=1)
+# the call is the best-correlating reference class. The marker scores stay in the document
+# as an independent read on the same question — where the two disagree, the disagreement is
+# the thing to look at before writing an override.
+cluster_calls = reference_correlation.idxmax(axis=1)
+marker_calls = mean_scores.idxmax(axis=1)
 
 # clusters the marker scores get wrong, corrected by hand after reading the heatmap and the
 # dotplot above, e.g. {"7": "Pericytes"}. These are the calls a human made rather than the
@@ -501,17 +681,23 @@ cluster_calls.update(pd.Series(cluster_call_overrides))
 
 wr_joyal.obs["cell_type"] = wr_joyal.obs[ranked_key].map(cluster_calls).astype("category")
 
-# keyed on every type in the panel rather than only the ones called, so a cell type keeps its
-# colour whatever a given resolution happens to find
-cell_type_palette = dict(zip(sorted(mean_scores.columns), sc.pl.palettes.default_20))
+# keyed on every class in the reference rather than only the ones called, so a cell type
+# keeps its colour whatever a given resolution happens to find
+cell_type_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20))
 wr_joyal.uns["cell_type_colors"] = [
     cell_type_palette[cell_type] for cell_type in wr_joyal.obs["cell_type"].cat.categories
 ]
 
+# margin is the gap to the runner-up class: a cluster called on a hair's difference is one
+# to read the heatmap for, however high its correlation
+sorted_correlation = np.sort(reference_correlation.to_numpy(), axis=1)
+
 pd.DataFrame({
     "cell_type": cluster_calls,
     "cells": wr_joyal.obs[ranked_key].value_counts(),
-    "top score": mean_scores.max(axis=1).round(3),
+    "correlation": reference_correlation.max(axis=1).round(3),
+    "margin": (sorted_correlation[:, -1] - sorted_correlation[:, -2]).round(3),
+    "marker call": marker_calls,
 })
 ```
 
