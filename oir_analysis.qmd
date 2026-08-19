@@ -673,10 +673,35 @@ plt.close(fig)
 cluster_calls = reference_correlation.idxmax(axis=1)
 marker_calls = mean_scores.idxmax(axis=1)
 
-# clusters the marker scores get wrong, corrected by hand after reading the heatmap and the
-# dotplot above, e.g. {"7": "Pericytes"}. These are the calls a human made rather than the
-# panel; everything not listed keeps its argmax.
-cluster_call_overrides = {}
+# every cluster called by hand after reading the heatmap and the dotplot above, so the sheet
+# is exhaustive rather than a list of exceptions and the argmax above is fully shadowed. As
+# written it ratifies the reference on all 21 clusters — including the two the marker panel
+# reads differently, 10 (AC, not Horizontal: 702 cells is far too many for HC, and the
+# panel's Prox1/Lhx1 are expressed in amacrine subsets) and 20 (Astrocyte, not Muller Glia).
+# A cluster left out would fall back to its argmax.
+cluster_call_overrides = {
+    "1": "Rod",
+    "2": "BC",
+    "3": "Rod",
+    "4": "BC",
+    "5": "MG",
+    "6": "Rod",
+    "7": "AC",
+    "8": "BC",
+    "9": "Rod",
+    "10": "AC",
+    "11": "Cone",
+    "12": "BC",
+    "13": "AC",
+    "14": "AC",
+    "15": "RGC",
+    "16": "Endothelial",
+    "17": "HC",
+    "18": "Microglia",
+    "19": "AC",
+    "20": "Astrocyte",
+    "21": "MG",
+}
 cluster_calls.update(pd.Series(cluster_call_overrides))
 
 wr_joyal.obs["cell_type"] = wr_joyal.obs[ranked_key].map(cluster_calls).astype("category")
@@ -715,34 +740,97 @@ pd.DataFrame({
 # enriched above background; a cell clearing neither keeps the cluster's call rather than
 # being sent one way on noise.
 #
-# there is no threshold to choose. The two scores are compared against each other, which is
-# what makes the same rule usable on any cluster listed below.
+# the assignment itself has no threshold to choose — the two scores are compared against
+# each other — but which clusters get split is gated below, because a disagreement between
+# the reference and the panel is not on its own evidence that a cluster holds two things.
 
-# the reference names classes and the marker panel names scores; the two vocabularies have
-# to be joined by hand
-class_scores = {
-    "Endothelial": "score_Vascular_Endothelial",
-    "Pericyte": "score_Pericytes",
+# the reference names classes and the marker panel names them differently; the two
+# vocabularies have to be joined by hand, and everything else here is derived from the join
+marker_to_class = {
+    "Rods": "Rod",                          "Cones": "Cone",
+    "RGC": "RGC",                           "Amacrine": "AC",
+    "Bipolar": "BC",                        "Horizontal": "HC",
+    "Muller_Glia": "MG",                    "Microglia": "Microglia",
+    "Vascular_Endothelial": "Endothelial",
+    "Pericytes": "Pericyte",                "Astrocytes": "Astrocyte",
 }
 
-# cluster -> (the class the reference called it, the class hiding inside it)
+# score_genes wrote score_<panel name>; mean_scores spaced the same names out for its axis
+class_scores = {cls: f"score_{panel}" for panel, cls in marker_to_class.items()}
+rival_calls = marker_calls.map(
+    {panel.replace("_", " "): cls for panel, cls in marker_to_class.items()}
+)
+
+# a cluster is a candidate exactly when the reference and the panel name it differently: one
+# of them is wrong, or — the case this chunk is for — the cluster holds both. The pair falls
+# out of the disagreement, the call above being the parent and the panel's answer the child.
 cluster_refinements = {
-    "16": ("Endothelial", "Pericyte"),
+    cluster: (cluster_calls[cluster], rival_calls[cluster])
+    for cluster in cluster_calls.index
+    if cluster_calls[cluster] != rival_calls[cluster]
 }
 
+# a disagreement says where to look, not what to do: the panels are not on a common scale,
+# so a panel of bright genes annexes cells from a dim one wherever the two are compared. The
+# split is therefore only applied where the cluster actually looks like two populations.
+#
+# the test is the L in the scatter below, written as a number. In a mixed cluster the two
+# scores trade off — a cell high on one is low on the other — so the rank correlation
+# between them across the cluster runs negative. In one population with a depth gradient
+# both scores rise and fall together and the correlation runs positive; cutting that at the
+# diagonal halves a gradient at an arbitrary place rather than finding a boundary. Requiring
+# both arms to be a real fraction of the cluster then throws out splits that shave off a
+# handful of cells.
+#
+# the scores have to actually trade off, not merely fail to correlate: a cluster sitting at
+# zero has the two scores independent of each other, which is a cloud rather than an L and
+# says nothing about there being two populations in it. The vascular cluster runs -0.75 and
+# the next candidate ten times weaker, so the cut is set between them rather than at zero.
+max_tradeoff = -0.25
+min_arm_cells = 10
+min_arm_fraction = 0.05
+
+split_diagnostics = []
 for cluster, (parent_class, child_class) in cluster_refinements.items():
     in_cluster = (wr_joyal.obs[ranked_key] == cluster).to_numpy()
     parent_score = wr_joyal.obs[class_scores[parent_class]].to_numpy()
     child_score = wr_joyal.obs[class_scores[child_class]].to_numpy()
 
     reassigned = in_cluster & (child_score > parent_score) & (child_score > 0)
+    n_cluster = int(in_cluster.sum())
+    n_child = int(reassigned.sum())
 
-    if child_class not in wr_joyal.obs["cell_type"].cat.categories:
-        wr_joyal.obs["cell_type"] = wr_joyal.obs["cell_type"].cat.add_categories([child_class])
-    wr_joyal.obs.loc[reassigned, "cell_type"] = child_class
+    tradeoff = np.corrcoef(
+        pd.Series(parent_score[in_cluster]).rank(),
+        pd.Series(child_score[in_cluster]).rank(),
+    )[0, 1]
+    smallest_arm = min(n_child, n_cluster - n_child)
+    applied = bool(
+        tradeoff < max_tradeoff
+        and smallest_arm >= max(min_arm_cells, min_arm_fraction * n_cluster)
+    )
 
-    print(f"cluster {cluster}: {reassigned.sum()} of {in_cluster.sum()} cells "
-          f"{parent_class} -> {child_class}")
+    if applied:
+        if child_class not in wr_joyal.obs["cell_type"].cat.categories:
+            wr_joyal.obs["cell_type"] = (
+                wr_joyal.obs["cell_type"].cat.add_categories([child_class])
+            )
+        wr_joyal.obs.loc[reassigned, "cell_type"] = child_class
+
+    split_diagnostics.append({
+        "cluster": cluster,
+        "parent": parent_class,
+        "child": child_class,
+        "cells": n_cluster,
+        "would move": n_child,
+        "tradeoff": round(tradeoff, 3),
+        "applied": applied,
+    })
+
+# a rejected row is not a failure: the cluster keeps its whole-cluster call, and the row is
+# the record of the panel having been overruled
+print(pd.DataFrame(split_diagnostics).to_string(index=False))
+split_applied = {row["cluster"]: row["applied"] for row in split_diagnostics}
 
 # a class added above lands at the end of the categories, which would put it last on every
 # axis downstream rather than in with the rest
@@ -792,7 +880,8 @@ for ax, (cluster, (parent_class, child_class)) in zip(axes.flat, cluster_refinem
     ]
     ax.plot(span, span, color="#b0b0b0", linewidth=1.0, linestyle="--", zorder=0)
 
-    ax.set_title(f"Cluster {cluster}", fontsize=9)
+    verdict = "split" if split_applied[cluster] else "left whole"
+    ax.set_title(f"Cluster {cluster} — {verdict}", fontsize=9)
     ax.set_xlabel(f"{parent_class} score", fontsize=8)
     ax.set_ylabel(f"{child_class} score", fontsize=8)
     ax.tick_params(labelsize=7)
