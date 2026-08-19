@@ -703,6 +703,105 @@ pd.DataFrame({
 
 :::
 
+## Refining a call with the marker scores
+
+```{python}
+#| label: refine-cell-types-wr-joyal
+# the reference calls a whole cluster one class, so a population that never forms its own
+# cluster cannot be named — the vascular cells here are one cluster of 106 holding both
+# endothelium and pericytes. Where the marker panel says a cluster holds two classes, the
+# cells are split: each goes to whichever of the two scores is higher, provided that score
+# clears zero. score_genes centres a score on a control gene set, so above zero means
+# enriched above background; a cell clearing neither keeps the cluster's call rather than
+# being sent one way on noise.
+#
+# there is no threshold to choose. The two scores are compared against each other, which is
+# what makes the same rule usable on any cluster listed below.
+
+# the reference names classes and the marker panel names scores; the two vocabularies have
+# to be joined by hand
+class_scores = {
+    "Endothelial": "score_Vascular_Endothelial",
+    "Pericyte": "score_Pericytes",
+}
+
+# cluster -> (the class the reference called it, the class hiding inside it)
+cluster_refinements = {
+    "16": ("Endothelial", "Pericyte"),
+}
+
+for cluster, (parent_class, child_class) in cluster_refinements.items():
+    in_cluster = (wr_joyal.obs[ranked_key] == cluster).to_numpy()
+    parent_score = wr_joyal.obs[class_scores[parent_class]].to_numpy()
+    child_score = wr_joyal.obs[class_scores[child_class]].to_numpy()
+
+    reassigned = in_cluster & (child_score > parent_score) & (child_score > 0)
+
+    if child_class not in wr_joyal.obs["cell_type"].cat.categories:
+        wr_joyal.obs["cell_type"] = wr_joyal.obs["cell_type"].cat.add_categories([child_class])
+    wr_joyal.obs.loc[reassigned, "cell_type"] = child_class
+
+    print(f"cluster {cluster}: {reassigned.sum()} of {in_cluster.sum()} cells "
+          f"{parent_class} -> {child_class}")
+
+# a class added above lands at the end of the categories, which would put it last on every
+# axis downstream rather than in with the rest
+wr_joyal.obs["cell_type"] = wr_joyal.obs["cell_type"].cat.remove_unused_categories()
+wr_joyal.obs["cell_type"] = wr_joyal.obs["cell_type"].cat.reorder_categories(
+    sorted(wr_joyal.obs["cell_type"].cat.categories)
+)
+wr_joyal.uns["cell_type_colors"] = [
+    cell_type_palette[cell_type] for cell_type in wr_joyal.obs["cell_type"].cat.categories
+]
+
+wr_joyal.obs["cell_type"].value_counts()
+```
+
+## Cells reassigned by marker score
+
+```{python}
+#| label: refine-scatter-wr-joyal
+# the two scores against each other, one panel per refinement. A cluster worth splitting
+# looks like an L — each arm high on one score and flat on the other, with the middle
+# empty. A diffuse cloud across the diagonal means the two classes are not separable this
+# way, and the cluster should be left alone.
+fig, axes = plt.subplots(1, len(cluster_refinements), squeeze=False,
+                         figsize=(4.3 * len(cluster_refinements), 3.6),
+                         constrained_layout=True)
+for ax, (cluster, (parent_class, child_class)) in zip(axes.flat, cluster_refinements.items()):
+    in_cluster = (wr_joyal.obs[ranked_key] == cluster).to_numpy()
+    cluster_cells = sc.get.obs_df(
+        wr_joyal,
+        keys=[class_scores[parent_class], class_scores[child_class], "cell_type"],
+    )[in_cluster]
+
+    for called_class in [parent_class, child_class]:
+        is_called = (cluster_cells["cell_type"] == called_class).to_numpy()
+        ax.scatter(
+            cluster_cells[class_scores[parent_class]][is_called],
+            cluster_cells[class_scores[child_class]][is_called],
+            s=14, c=cell_type_palette[called_class], linewidths=0,
+            label=f"{called_class} ({is_called.sum()})",
+        )
+
+    # the decision boundary is the diagonal, which is the whole point of comparing the two
+    # scores rather than cutting one of them at a number
+    span = [
+        cluster_cells[[class_scores[parent_class], class_scores[child_class]]].min().min(),
+        cluster_cells[[class_scores[parent_class], class_scores[child_class]]].max().max(),
+    ]
+    ax.plot(span, span, color="#b0b0b0", linewidth=1.0, linestyle="--", zorder=0)
+
+    ax.set_title(f"Cluster {cluster}", fontsize=9)
+    ax.set_xlabel(f"{parent_class} score", fontsize=8)
+    ax.set_ylabel(f"{child_class} score", fontsize=8)
+    ax.tick_params(labelsize=7)
+    ax.legend(fontsize=7, frameon=False, loc="upper right")
+
+plt.show()
+plt.close(fig)
+```
+
 ## Preliminary cell types on the UMAP
 
 ```{python}
