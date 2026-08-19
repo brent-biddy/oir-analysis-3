@@ -28,7 +28,6 @@ import pandas as pd
 import scanpy as sc
 import seaborn as sns
 from anndata.io import read_elem
-from IPython.display import Markdown, display
 from scipy.sparse import csr_matrix
 
 plt.rcParams.update({
@@ -42,825 +41,6 @@ plt.rcParams.update({
     "legend.fontsize": 11,
     "figure.titlesize": 14,
 })
-
-# ── what varies between the batches ──────────────────────────────────────────────────
-#
-# Everything else in this document is identical for both. The resolution is chosen from
-# that batch's own sweep, and the override sheet is keyed on that batch's own cluster
-# numbers — a Leiden run ranked by size — so neither transfers between them.
-BATCHES = {
-    "WR_Joyal": {
-        "resolution": 1.0,
-        # every cluster called by hand after reading the heatmap and the dotplot, so the
-        # sheet is exhaustive rather than a list of exceptions and the argmax is fully
-        # shadowed. As written it ratifies the reference on all 21 clusters — including
-        # the two the marker panel reads differently, 10 (AC, not Horizontal: 702 cells
-        # is far too many for HC, and the panel's Prox1/Lhx1 are expressed in amacrine
-        # subsets) and 20 (Astrocyte, not Muller Glia).
-        "overrides": {
-            "1": "Rod",       "2": "BC",          "3": "Rod",
-            "4": "BC",        "5": "MG",          "6": "Rod",
-            "7": "AC",        "8": "BC",          "9": "Rod",
-            "10": "AC",       "11": "Cone",       "12": "BC",
-            "13": "AC",       "14": "AC",         "15": "RGC",
-            "16": "Endothelial", "17": "HC",      "18": "Microglia",
-            "19": "AC",       "20": "Astrocyte",  "21": "MG",
-        },
-    },
-    "Cd73ft_Joyal": {
-        "resolution": 1.0,
-        # not read yet: every call below is the reference's argmax. Fill this in from the
-        # table in the HTML once the heatmap and the dotplot have been looked at.
-        "overrides": {},
-    },
-}
-
-# ── constants shared by every batch ──────────────────────────────────────────────────
-retina_markers = {
-    "Rods": ["Rho", "Pde6b", "Nrl", "Nr2e3"],
-    "Cones": ["Opn1mw", "Opn1sw", "Arr3", "Thrb"],
-    "RGC": ["Rbpms", "Sncg", "Pou4f1", "Pou4f2"],
-    "Amacrine": ["Tfap2a", "Tfap2b", "Chat", "Vsx1"],
-    "Bipolar": ["Vsx2", "Isl1", "Prkca", "Cabp5"],
-    "Horizontal": ["Onecut1", "Onecut2", "Lhx1", "Prox1"],
-    "Muller_Glia": ["Rlbp1", "Glul", "Sox9", "Slc1a3"],
-    "Microglia": ["Cx3cr1", "P2ry12", "Tmem119", "Aif1"],
-    "Vascular_Endothelial": ["Cdh5", "Pecam1", "Tek"],
-    "Pericytes": ["Pdgfrb", "Acta2", "Des"],
-    "Astrocytes": ["Gfap", "Aldh1l1", "Aqp4"],
-}
-score_keys = [f"score_{cell_type}" for cell_type in retina_markers]
-
-# the reference names classes and the marker panel names them differently; the two
-# vocabularies have to be joined by hand, and the rest is derived from the join
-marker_to_class = {
-    "Rods": "Rod",                          "Cones": "Cone",
-    "RGC": "RGC",                           "Amacrine": "AC",
-    "Bipolar": "BC",                        "Horizontal": "HC",
-    "Muller_Glia": "MG",                    "Microglia": "Microglia",
-    "Vascular_Endothelial": "Endothelial",
-    "Pericytes": "Pericyte",                "Astrocytes": "Astrocyte",
-}
-class_scores = {cls: f"score_{panel}" for panel, cls in marker_to_class.items()}
-
-qc_metrics = {
-    "n_genes_by_log1p": "Genes detected",
-    "total_log1p": "Total expression",
-    "pct_log1p_mt": "% mitochondrial",
-    "pct_log1p_ribo": "% ribosomal",
-    "pct_log1p_hb": "% hemoglobin",
-}
-violin_inner_kws = {"box_width": 2, "whis_width": 1, "marker": "o",
-                    "markersize": 3.0, "markeredgecolor": "white"}
-
-obs_palettes = {
-    "condition": {"NORM": "#2AABB8", "OIR": "#E87D2A"},
-    "timepoint": {"P14": "#2855A0", "P17": "#D63650"},
-    "sort":      {"Cd73ft": "#C9A227", "WR": "#5DB85D"},
-    "lab":       {"Joyal": "#7B4FB5", "Mccarrol": "#A0522D"},
-    "batch":     {"Cd73ft_Joyal": "#C9A227", "WR_Joyal": "#5DB85D", "WR_Mccarrol": "#A0522D"},
-}
-
-# a split is only applied where the cluster looks like two populations rather than one.
-# See refine_cell_types for what the numbers mean.
-MAX_TRADEOFF = -0.25
-MIN_ARM_CELLS = 10
-MIN_ARM_FRACTION = 0.05
-
-
-# ── small shared derivations ─────────────────────────────────────────────────────────
-def html_section(title, *blocks):
-    """A titled section only the HTML render shows.
-
-    The computational output — the tables the calls are read off, the marker counts, the
-    split diagnostics — belongs in the document but not on a slide: pandoc puts printed
-    output on a slide of its own as raw monospace text.
-
-    Emitted as one markdown block, which is load-bearing. A fenced div opened in one
-    display() call and closed in another is not paired up: each call is its own block, so
-    the fence survives into the deck as literal ":::" text on a slide of its own.
-    """
-    body = "\n\n".join(str(block) for block in blocks)
-    display(Markdown(
-        f'::: {{.content-visible when-format="html"}}\n\n## {title}\n\n{body}\n\n:::'
-    ))
-
-
-def as_table(frame):
-    """A DataFrame or Series as markdown, so it lands as a table rather than as a dump."""
-    return frame.to_markdown()
-
-
-def as_text(lines):
-    """Preformatted lines, for output that is not a table."""
-    return "```\n" + "\n".join(lines) + "\n```"
-
-
-def slide(heading):
-    """Emit a slide heading. Every slide function starts with one, so the loop's list of
-    slide functions is the deck's table of contents."""
-    display(Markdown(f"## {heading}"))
-
-
-def draw_order(adata):
-    """Cells are drawn in this order, so whatever comes last sits on top. Shuffled,
-    because the matrix order is the order cells came off the sequencer and it buries
-    whole clusters under their neighbours."""
-    return np.random.default_rng(0).permutation(adata.n_obs)
-
-
-def obs_palette(adata, key):
-    """The palette scanpy stored in uns, as the dict seaborn wants. Only scanpy reads the
-    _colors entry, so seaborn has to be handed it explicitly — otherwise a category
-    changes colour between the UMAP and the violins."""
-    return dict(zip(adata.obs[key].cat.categories, adata.uns[f"{key}_colors"]))
-
-
-def recolour_by_position(ax, order, palette):
-    """seaborn colours violin bodies in an order that does not follow the x positions when
-    hue repeats x, so the legend ends up right and the violins wrong. Recolour each body
-    from the category it actually sits under. The order comes off the categorical rather
-    than the tick labels, which are empty on a shared axis."""
-    for body in ax.collections:
-        extents = body.get_paths()[0].get_extents()
-        body.set_facecolor(palette[order[round((extents.x0 + extents.x1) / 2)]])
-
-
-def violin_by_cluster(ax, frame, ranked_key, value_key, label, palette, order):
-    """One row of a stacked per-cluster violin figure."""
-    # dodge=False because hue repeats x: left on, seaborn gives each cluster its own
-    # sub-slot and every violin is drawn a twentieth of its slot wide, off its tick
-    sns.violinplot(data=frame, x=ranked_key, y=value_key, hue=ranked_key, palette=palette,
-                   legend=False, dodge=False, cut=0, density_norm="width", inner="box",
-                   inner_kws=violin_inner_kws, linewidth=0.5, saturation=1, ax=ax)
-    recolour_by_position(ax, order, palette)
-    ax.set_ylabel(label, fontsize=7)
-    ax.set_xlabel("")
-    ax.tick_params(axis="y", labelsize=6)
-    ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
-    ax.set_axisbelow(True)
-
-
-def txn1_violin(ax, frame, hue_key, palette, cell_type_order):
-    """Txn1 per cell type, split by one design factor."""
-    sns.violinplot(data=frame, x="cell_type", y="TXN1", order=cell_type_order, hue=hue_key,
-                   palette=palette, cut=0, density_norm="width", inner="box",
-                   inner_kws=violin_inner_kws, linewidth=0.5, ax=ax)
-    ax.set_xlabel("")
-    ax.set_ylabel("Txn1 (log1p)", fontsize=9)
-    ax.tick_params(axis="x", labelrotation=45, labelsize=8)
-    ax.tick_params(axis="y", labelsize=8)
-    ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
-    ax.set_axisbelow(True)
-    for label in ax.get_xticklabels():
-        label.set_ha("right")
-    ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
-
-
-def horizontal_colorbar(fig, ax, bar_ax):
-    """The colorbar strip under a UMAP panel. The strip reserves the space; the colorbar
-    drawn inside it is excluded from the layout so its tick labels cannot push the panel
-    around."""
-    bar_ax.axis("off")
-    colorbar_ax = bar_ax.inset_axes([0.325, 0.82, 0.35, 0.18])
-    colorbar_ax.set_in_layout(False)
-    colorbar = fig.colorbar(ax.collections[0], cax=colorbar_ax, orientation="horizontal")
-
-    # placed explicitly at the ends and middle: the automatic locator picks its own round
-    # numbers per panel, so the tick count and positions would differ from panel to panel
-    low, high = ax.collections[0].get_clim()
-    ticks = np.linspace(low, high, 3)
-    colorbar.set_ticks(ticks, labels=[f"{tick:.2f}" for tick in ticks])
-    colorbar.ax.tick_params(labelsize=7)
-
-
-# ── the analysis, per batch ──────────────────────────────────────────────────────────
-def cluster_batch(adata, batch):
-    """Subset to one batch, QC it, embed it, and sweep Leiden across resolutions.
-
-    Cached to disk: the sweep is the expensive step and nothing above it varies.
-    """
-    clustered_path = Path(f"data/processed/GSE150703_adata_{batch}_clustered.h5ad")
-    if clustered_path.exists():
-        return sc.read_h5ad(clustered_path)
-
-    batch_adata = adata[adata.obs["batch"] == batch].copy()
-    for column in ["condition", "timepoint", "sort", "lab", "replicate", "batch"]:
-        batch_adata.obs[column] = batch_adata.obs[column].cat.remove_unused_categories()
-
-    batch_adata.var["mt"] = batch_adata.var_names.str.startswith("MT-")
-    batch_adata.var["ribo"] = batch_adata.var_names.str.startswith(("RPS", "RPL"))
-    batch_adata.var["hb"] = batch_adata.var_names.str.startswith(("HBA-", "HBB-"))
-    sc.pp.calculate_qc_metrics(
-        batch_adata,
-        qc_vars=["mt", "ribo", "hb"],
-        expr_type="log1p",
-        percent_top=None,
-        log1p=False,
-        inplace=True,
-    )
-
-    sc.pp.filter_genes(batch_adata, min_cells=3)
-    sc.pp.highly_variable_genes(batch_adata, n_top_genes=2000, flavor="seurat")
-    sc.pp.pca(batch_adata, svd_solver="arpack")
-    sc.pp.neighbors(batch_adata, n_neighbors=10, n_pcs=40)
-    sc.tl.umap(batch_adata)
-
-    for resolution in [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5]:
-        sc.tl.leiden(
-            batch_adata,
-            resolution=resolution,
-            key_added=f"leiden_res_{resolution:.2f}_v0",
-            flavor="igraph",
-            random_state=0,
-        )
-
-    batch_adata.write_h5ad(clustered_path)
-    return batch_adata
-
-
-def rank_clusters(adata, resolution):
-    """Relabel the chosen resolution's clusters 1..n by size, and return that key."""
-    leiden_key = f"leiden_res_{resolution:.2f}_v0"
-    ranked_key = f"leiden_res_{resolution:.2f}_v1"
-
-    cluster_sizes = adata.obs[leiden_key].value_counts()
-    ranked_labels = [str(rank) for rank in range(1, len(cluster_sizes) + 1)]
-
-    adata.obs[ranked_key] = (
-        adata.obs[leiden_key]
-        .map(dict(zip(cluster_sizes.index, ranked_labels)))
-        .astype("category")
-        .cat.reorder_categories(ranked_labels)
-    )
-    adata.uns[f"{ranked_key}_colors"] = [
-        mcolors.to_hex(plt.cm.tab20.colors[(int(label) - 1) % 20]) for label in ranked_labels
-    ]
-    return ranked_key
-
-
-def correlate_with_reference(adata, ranked_key, reference_centroids):
-    """Spearman correlation of every cluster against every reference class.
-
-    Correlated over the query's variable genes rather than everything shared: the
-    housekeeping bulk is near-identical in every class and only lifts all twelve
-    correlations together, flattening the differences the call is made on.
-
-    Spearman, so a class is matched on the order it puts the genes in rather than on
-    absolute levels — the two datasets were normalized by different pipelines. Ranking the
-    rows and taking Pearson is the same thing, and does every pair in one call.
-    """
-    feature_genes = [
-        gene for gene in adata.var_names[adata.var["highly_variable"]]
-        if gene in reference_centroids.var_names
-    ]
-
-    clusters = adata.obs[ranked_key].cat.categories
-    cluster_profiles = pd.DataFrame(
-        [
-            np.asarray(adata[adata.obs[ranked_key] == cluster, feature_genes].X.mean(axis=0)).ravel()
-            for cluster in clusters
-        ],
-        index=clusters, columns=feature_genes,
-    )
-    reference_profiles = pd.DataFrame(
-        reference_centroids[:, feature_genes].X,
-        index=reference_centroids.obs_names, columns=feature_genes,
-    )
-
-    ranked_clusters = cluster_profiles.rank(axis=1)
-    ranked_reference = reference_profiles.rank(axis=1)
-    correlation = pd.DataFrame(
-        np.corrcoef(ranked_clusters, ranked_reference)[:len(ranked_clusters), len(ranked_clusters):],
-        index=cluster_profiles.index, columns=reference_profiles.index,
-    )
-    return correlation, len(feature_genes)
-
-
-def score_markers(adata):
-    """Score the marker panel over the cells, and report what of it this batch carries."""
-    markers_present = {}
-    report = []
-    for cell_type, genes in retina_markers.items():
-        present = [gene.upper() for gene in genes if gene.upper() in adata.var_names]
-        sc.tl.score_genes(adata, gene_list=present, score_name=f"score_{cell_type}")
-        markers_present[cell_type] = present
-        report.append(f"{cell_type}: {len(present)}/{len(genes)} markers")
-    return markers_present, report
-
-
-def refine_cell_types(adata, ranked_key, cluster_calls, marker_calls, cell_type_palette):
-    """Split clusters that hold two classes, where the split is clean enough to believe.
-
-    The reference calls a whole cluster one class, so a population that never forms its
-    own cluster cannot be named — the vascular cells in WR_Joyal are one cluster of 106
-    holding both endothelium and pericytes. Where the panel and the reference name a
-    cluster differently, its cells are split: each goes to whichever of the two scores is
-    higher, provided that score clears zero. score_genes centres a score on a control gene
-    set, so above zero means enriched above background; a cell clearing neither keeps the
-    cluster's call rather than being sent one way on noise.
-
-    A disagreement says where to look, not what to do: the panels are not on a common
-    scale, so a panel of bright genes annexes cells from a dim one wherever the two are
-    compared. The split is therefore only applied where the cluster actually looks like
-    two populations. The test is the L in the scatter, written as a number — in a mixed
-    cluster the two scores trade off, so their rank correlation runs negative; in one
-    population with a depth gradient both rise and fall together and it runs positive.
-    The scores have to actually trade off, not merely fail to correlate: a cluster sitting
-    at zero has them independent, which is a cloud rather than an L.
-    """
-    rival_calls = marker_calls.map(
-        {panel.replace("_", " "): cls for panel, cls in marker_to_class.items()}
-    )
-    refinements = {
-        cluster: (cluster_calls[cluster], rival_calls[cluster])
-        for cluster in cluster_calls.index
-        if cluster_calls[cluster] != rival_calls[cluster]
-    }
-
-    diagnostics = []
-    for cluster, (parent_class, child_class) in refinements.items():
-        in_cluster = (adata.obs[ranked_key] == cluster).to_numpy()
-        parent_score = adata.obs[class_scores[parent_class]].to_numpy()
-        child_score = adata.obs[class_scores[child_class]].to_numpy()
-
-        reassigned = in_cluster & (child_score > parent_score) & (child_score > 0)
-        n_cluster = int(in_cluster.sum())
-        n_child = int(reassigned.sum())
-
-        tradeoff = np.corrcoef(
-            pd.Series(parent_score[in_cluster]).rank(),
-            pd.Series(child_score[in_cluster]).rank(),
-        )[0, 1]
-        smallest_arm = min(n_child, n_cluster - n_child)
-        applied = bool(
-            tradeoff < MAX_TRADEOFF
-            and smallest_arm >= max(MIN_ARM_CELLS, MIN_ARM_FRACTION * n_cluster)
-        )
-
-        if applied:
-            if child_class not in adata.obs["cell_type"].cat.categories:
-                adata.obs["cell_type"] = adata.obs["cell_type"].cat.add_categories([child_class])
-            adata.obs.loc[reassigned, "cell_type"] = child_class
-
-        diagnostics.append({
-            "cluster": cluster, "parent": parent_class, "child": child_class,
-            "cells": n_cluster, "would move": n_child,
-            "tradeoff": round(tradeoff, 3), "applied": applied,
-        })
-
-    # a class added above lands at the end of the categories, which would put it last on
-    # every axis downstream rather than in with the rest
-    adata.obs["cell_type"] = adata.obs["cell_type"].cat.remove_unused_categories()
-    adata.obs["cell_type"] = adata.obs["cell_type"].cat.reorder_categories(
-        sorted(adata.obs["cell_type"].cat.categories)
-    )
-    adata.uns["cell_type_colors"] = [
-        cell_type_palette[cell_type] for cell_type in adata.obs["cell_type"].cat.categories
-    ]
-    return refinements, pd.DataFrame(diagnostics)
-
-
-# ── the slides ───────────────────────────────────────────────────────────────────────
-def umap_sweep_slide(adata, resolution_keys):
-    """Slide: the Leiden sweep, three resolutions per figure."""
-    slide("Leiden sweep")
-    order = draw_order(adata)
-
-    for start in range(0, len(resolution_keys), 3):
-        group = resolution_keys[start:start + 3]
-
-        # the second row is the colorbar strip the score UMAPs use. It is reserved here
-        # too, and left empty, so both sets of panels have identical geometry.
-        fig, axs = plt.subplots(2, 3, height_ratios=[1, 0.22], figsize=(8.6, 3.4),
-                                constrained_layout=True)
-        for ax, leiden_key_v0 in zip(axs[0], group):
-            sc.pl.umap(adata[order], color=leiden_key_v0, ax=ax, legend_loc="on data",
-                       legend_fontsize=9, frameon=True, show=False)
-            ax.set_aspect("equal", adjustable="datalim")
-
-        for bar_ax in axs[1]:
-            bar_ax.axis("off")
-        for empty_ax in axs[0][len(group):]:
-            fig.delaxes(empty_ax)
-
-        plt.show()
-        plt.close(fig)
-
-
-def umap_clusters_slide(adata, ranked_key):
-    """Slide: the chosen resolution's clusters, numbered on the embedding."""
-    slide("Clusters on the UMAP")
-    # scanpy builds the figure here, and takes no figsize argument, so rcParams is where
-    # its size has to be set
-    plt.rcParams["figure.figsize"] = (5.0, 4.3)
-
-    ax = sc.pl.umap(adata[draw_order(adata)], color=ranked_key, legend_loc="on data",
-                    legend_fontoutline=2, frameon=True, show=False)
-    ax.set_aspect("equal", adjustable="datalim")
-    plt.show()
-
-
-def qc_violin_slide(adata, qc_df):
-    """Slide: the batch's per-cell QC, one violin per metric."""
-    slide("QC metrics")
-    batch_color = adata.uns["batch_colors"][0]
-
-    fig, axes = plt.subplots(1, len(qc_metrics), squeeze=False, figsize=(9, 3.0),
-                             constrained_layout=True)
-    for ax, (qc_key, qc_label) in zip(axes.flat, qc_metrics.items()):
-        sns.violinplot(data=qc_df, y=qc_key, color=batch_color, cut=0, density_norm="width",
-                       inner="box", inner_kws=violin_inner_kws, linewidth=0.5, ax=ax)
-        ax.set_ylabel(qc_label, fontsize=9)
-        ax.tick_params(axis="y", labelsize=8)
-        ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
-        ax.set_axisbelow(True)
-
-    plt.show()
-    plt.close(fig)
-
-
-def qc_violin_by_cluster_slide(adata, qc_df, ranked_key):
-    """Slide: the same QC metrics, split by cluster."""
-    slide("QC metrics by cluster")
-    palette = obs_palette(adata, ranked_key)
-    order = list(adata.obs[ranked_key].cat.categories)
-
-    fig, axes = plt.subplots(len(qc_metrics), 1, squeeze=False, sharex=True, figsize=(9, 4.3),
-                             constrained_layout=True)
-    for ax, (qc_key, qc_label) in zip(axes.flat, qc_metrics.items()):
-        violin_by_cluster(ax, qc_df, ranked_key, qc_key, qc_label, palette, order)
-
-    axes[-1][0].set_xlabel("Cluster", fontsize=9)
-    axes[-1][0].tick_params(axis="x", labelsize=8)
-    plt.show()
-    plt.close(fig)
-
-
-def heatmap_reference_slide(reference_correlation):
-    """Slide: cluster-to-class correlation, three normalizations.
-
-    The raw correlations sit in a narrow band, so the two scaled panels are what can
-    actually be read: down a column asks "which cluster is most this class", and across a
-    row asks "which class best fits this cluster" — the annotation question, and the one
-    the calls are taken from.
-
-    Only the row scaling is a call. A column's brightest cell is the best home for that
-    class whether or not the class is present at all: RPE peaks on a rod cluster in
-    WR_Joyal, which says where it would land rather than that it was found.
-    """
-    slide("Correlation with the reference by cluster")
-
-    class_range = reference_correlation.max(axis=0) - reference_correlation.min(axis=0)
-    scaled_by_class = reference_correlation.sub(
-        reference_correlation.min(axis=0), axis=1
-    ).div(class_range, axis=1)
-
-    correlation_range = reference_correlation.max(axis=1) - reference_correlation.min(axis=1)
-    scaled_by_cluster = reference_correlation.sub(
-        reference_correlation.min(axis=1), axis=0
-    ).div(correlation_range, axis=0)
-
-    panels = {
-        "Spearman correlation": reference_correlation,
-        "Scaled per class": scaled_by_class,
-        "Scaled per cluster": scaled_by_cluster,
-    }
-    heatmap_panels(panels, scaled_by_cluster, "Reference class", figsize=(9, 4.3))
-
-
-def score_violin_by_cluster_slide(adata, score_df, ranked_key):
-    """Slide: every marker score, split by cluster, six panels per figure."""
-    slide("Marker scores by cluster")
-    palette = obs_palette(adata, ranked_key)
-    order = list(adata.obs[ranked_key].cat.categories)
-
-    for start in range(0, len(score_keys), 6):
-        group = score_keys[start:start + 6]
-        group_types = list(retina_markers)[start:start + 6]
-
-        fig, axes = plt.subplots(len(group), 1, squeeze=False, sharex=True, figsize=(9, 4.3),
-                                 constrained_layout=True)
-        for ax, score_key, cell_type in zip(axes.flat, group, group_types):
-            violin_by_cluster(ax, score_df, ranked_key, score_key,
-                              f"{cell_type.replace('_', ' ')} score", palette, order)
-
-        axes[-1][0].set_xlabel("Cluster", fontsize=9)
-        axes[-1][0].tick_params(axis="x", labelsize=8)
-        plt.show()
-        plt.close(fig)
-
-
-def umap_scores_slide(adata):
-    """Slide: every marker score on the embedding, three per figure."""
-    slide("Marker scores on the UMAP")
-
-    for start in range(0, len(score_keys), 3):
-        group = score_keys[start:start + 3]
-
-        fig, axs = plt.subplots(2, 3, height_ratios=[1, 0.22], figsize=(8.6, 3.4),
-                                constrained_layout=True)
-        for ax, bar_ax, score_key in zip(axs[0], axs[1], group):
-            sc.pl.umap(adata, color=score_key, ax=ax, frameon=True, colorbar_loc=None,
-                       show=False)
-            ax.set_aspect("equal", adjustable="datalim")
-            horizontal_colorbar(fig, ax, bar_ax)
-
-        for empty_ax in axs[0][len(group):]:
-            fig.delaxes(empty_ax)
-        for empty_bar_ax in axs[1][len(group):]:
-            empty_bar_ax.axis("off")
-
-        plt.show()
-        plt.close(fig)
-
-
-def dotplot_markers_slide(adata, markers_present, ranked_key):
-    """Slide: the marker panel itself, gene by cluster."""
-    slide("Marker genes by cluster")
-    # figsize is deliberately not passed: dotplot derives its own from the gene and cluster
-    # counts, and forcing it to slide dimensions packs the genes until the dots overlap
-    sc.pl.dotplot(adata, markers_present, groupby=ranked_key, standard_scale="var")
-
-
-def heatmap_panels(panels, diagonal_source, xlabel, figsize):
-    """Draw one matrix several ways, columns ordered so the matches read as a diagonal.
-
-    Walk the clusters in order and take each one's best column; a column already placed is
-    skipped, and any column no cluster leads with is appended.
-    """
-    column_order = []
-    for cluster in diagonal_source.index:
-        best = diagonal_source.loc[cluster].idxmax()
-        if best not in column_order:
-            column_order.append(best)
-    column_order += [name for name in diagonal_source.columns if name not in column_order]
-
-    fig, axes = plt.subplots(1, len(panels), squeeze=False, figsize=figsize,
-                             constrained_layout=True)
-    for ax, (title, matrix) in zip(axes.flat, panels.items()):
-        # xticklabels/yticklabels left at "auto" thins the labels to every other one once a
-        # third panel is on the figure, which leaves half the columns unnamed
-        sns.heatmap(matrix[column_order], cmap="viridis", linewidths=0.5, linecolor="white",
-                    xticklabels=True, yticklabels=True,
-                    cbar_kws={"shrink": 0.6, "pad": 0.02}, ax=ax)
-        ax.set_title(title, fontsize=9)
-        ax.set_xlabel(xlabel, fontsize=8)
-        ax.set_ylabel("Cluster", fontsize=8)
-        ax.tick_params(axis="x", labelrotation=45, labelsize=7)
-        ax.tick_params(axis="y", labelrotation=0, labelsize=7)
-        for label in ax.get_xticklabels():
-            label.set_ha("right")
-
-    plt.show()
-    plt.close(fig)
-
-
-def heatmap_scores_slide(mean_scores):
-    """Slide: mean marker score per cluster, three normalizations.
-
-    The raw means show magnitude, scaling down a column asks "which cluster is most this
-    cell type", and scaling across a row asks "which cell type best fits this cluster" —
-    the annotation question.
-    """
-    slide("Marker score heatmap")
-
-    scaled_by_type = (mean_scores - mean_scores.min()) / (mean_scores.max() - mean_scores.min())
-    row_range = mean_scores.max(axis=1) - mean_scores.min(axis=1)
-    scaled_by_cluster = mean_scores.sub(mean_scores.min(axis=1), axis=0).div(row_range, axis=0)
-
-    panels = {
-        "Mean score": mean_scores,
-        "Scaled per cell type": scaled_by_type,
-        "Scaled per cluster": scaled_by_cluster,
-    }
-    heatmap_panels(panels, scaled_by_cluster, "Cell type", figsize=(9, 4.3))
-
-
-def refine_scatter_slide(adata, refinements, diagnostics, ranked_key, cell_type_palette):
-    """Slide: the two scores against each other, one panel per candidate.
-
-    A cluster worth splitting looks like an L — each arm high on one score and flat on the
-    other, with the middle empty. A diffuse cloud across the diagonal means the two classes
-    are not separable this way, and the cluster is left alone.
-    """
-    slide("Cells reassigned by marker score")
-    if not refinements:
-        display(Markdown("No cluster was called differently by the reference and the panel."))
-        return
-
-    applied = dict(zip(diagnostics["cluster"], diagnostics["applied"]))
-
-    fig, axes = plt.subplots(1, len(refinements), squeeze=False,
-                             figsize=(4.3 * len(refinements), 3.6), constrained_layout=True)
-    for ax, (cluster, (parent_class, child_class)) in zip(axes.flat, refinements.items()):
-        in_cluster = (adata.obs[ranked_key] == cluster).to_numpy()
-        cluster_cells = sc.get.obs_df(
-            adata, keys=[class_scores[parent_class], class_scores[child_class], "cell_type"],
-        )[in_cluster]
-
-        for called_class in [parent_class, child_class]:
-            is_called = (cluster_cells["cell_type"] == called_class).to_numpy()
-            ax.scatter(
-                cluster_cells[class_scores[parent_class]][is_called],
-                cluster_cells[class_scores[child_class]][is_called],
-                s=14, c=cell_type_palette[called_class], linewidths=0,
-                label=f"{called_class} ({is_called.sum()})",
-            )
-
-        # the decision boundary is the diagonal, which is the whole point of comparing the
-        # two scores rather than cutting one of them at a number
-        span = [
-            cluster_cells[[class_scores[parent_class], class_scores[child_class]]].min().min(),
-            cluster_cells[[class_scores[parent_class], class_scores[child_class]]].max().max(),
-        ]
-        ax.plot(span, span, color="#b0b0b0", linewidth=1.0, linestyle="--", zorder=0)
-
-        ax.set_title(f"Cluster {cluster} — {'split' if applied[cluster] else 'left whole'}",
-                     fontsize=9)
-        ax.set_xlabel(f"{parent_class} score", fontsize=8)
-        ax.set_ylabel(f"{child_class} score", fontsize=8)
-        ax.tick_params(labelsize=7)
-        ax.legend(fontsize=7, frameon=False, loc="upper right")
-
-    plt.show()
-    plt.close(fig)
-
-
-def umap_cell_types_slide(adata):
-    """Slide: the called cell types on the embedding."""
-    slide("Cell types on the UMAP")
-    plt.rcParams["figure.figsize"] = (6.5, 4.3)
-
-    ax = sc.pl.umap(adata[draw_order(adata)], color="cell_type", frameon=True, show=False)
-    ax.set_aspect("equal", adjustable="datalim")
-    plt.show()
-
-
-def umap_txn1_slide(adata):
-    """Slide: Txn1 on the embedding."""
-    slide("Txn1 on the UMAP")
-
-    fig, axs = plt.subplots(2, 1, height_ratios=[1, 0.22], figsize=(4.3, 3.9),
-                            constrained_layout=True)
-    sc.pl.umap(adata, color="TXN1", ax=axs[0], frameon=True, colorbar_loc=None, show=False)
-    axs[0].set_aspect("equal", adjustable="datalim")
-    horizontal_colorbar(fig, axs[0], axs[1])
-
-    plt.show()
-    plt.close(fig)
-
-
-def txn1_violin_celltype_slide(adata, txn1_df, cell_type_palette):
-    """Slide: Txn1 per cell type."""
-    slide("Txn1 by cell type")
-    cell_type_order = list(adata.obs["cell_type"].cat.categories)
-
-    fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
-    sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", hue="cell_type",
-                   palette=cell_type_palette, legend=True, dodge=False, cut=0,
-                   density_norm="width", inner="box", inner_kws=violin_inner_kws,
-                   linewidth=0.5, saturation=1, ax=ax)
-    recolour_by_position(ax, cell_type_order, cell_type_palette)
-
-    ax.set_xlabel("")
-    ax.set_ylabel("Txn1 (log1p)", fontsize=9)
-    ax.tick_params(axis="x", labelrotation=45, labelsize=8)
-    ax.tick_params(axis="y", labelsize=8)
-    ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
-    ax.set_axisbelow(True)
-    for label in ax.get_xticklabels():
-        label.set_ha("right")
-    ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
-
-    plt.show()
-    plt.close(fig)
-
-
-def txn1_violin_condition_slide(adata, txn1_df):
-    """Slide: Txn1 per cell type, NORM against OIR."""
-    slide("Txn1 by cell type and condition")
-    fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
-    txn1_violin(ax, txn1_df, "condition", obs_palette(adata, "condition"),
-                list(adata.obs["cell_type"].cat.categories))
-    plt.show()
-    plt.close(fig)
-
-
-def txn1_violin_timepoint_slide(adata, txn1_df):
-    """Slide: Txn1 per cell type, P14 against P17."""
-    slide("Txn1 by cell type and timepoint")
-    fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
-    txn1_violin(ax, txn1_df, "timepoint", obs_palette(adata, "timepoint"),
-                list(adata.obs["cell_type"].cat.categories))
-    plt.show()
-    plt.close(fig)
-
-
-def umap_txn1_stratified_slide(adata):
-    """Slide: Txn1 on the embedding, one panel per design cell.
-
-    Laid out like the violin slides: timepoint down the rows, condition across the
-    columns, so the same comparison sits in the same direction in every Txn1 figure.
-    """
-    slide("Txn1 across the design")
-    condition_order = list(adata.obs["condition"].cat.categories)
-    timepoints = list(adata.obs["timepoint"].cat.categories)
-
-    umap_coords = adata.obsm["X_umap"]
-    txn1 = sc.get.obs_df(adata, keys=["TXN1"])["TXN1"].to_numpy()
-    txn1_low, txn1_high = txn1.min(), txn1.max()
-
-    # drawn with scatter rather than sc.pl.umap: it puts the whole embedding underneath in
-    # grey, and it fixes the point size, which scanpy scales by cell count — the sparse
-    # panels would otherwise carry much larger points than the dense ones.
-    fig, axes = plt.subplots(len(timepoints), len(condition_order), squeeze=False,
-                             figsize=(5.6, 4.4), constrained_layout=True)
-    fig.get_layout_engine().set(w_pad=0.01, h_pad=0.01, wspace=0.01, hspace=0.02)
-    for row, timepoint in enumerate(timepoints):
-        for column, condition in enumerate(condition_order):
-            ax = axes[row][column]
-            in_stratum = (
-                (adata.obs["timepoint"] == timepoint) & (adata.obs["condition"] == condition)
-            ).to_numpy()
-
-            # every cell in grey, so each panel is read against the same outline rather
-            # than appearing to be a differently-shaped dataset
-            ax.scatter(umap_coords[:, 0], umap_coords[:, 1], s=1, c="#bfbfbf", linewidths=0)
-            points = ax.scatter(umap_coords[in_stratum, 0], umap_coords[in_stratum, 1], s=1,
-                                c=txn1[in_stratum], cmap="viridis",
-                                vmin=txn1_low, vmax=txn1_high, linewidths=0)
-
-            ax.set_aspect("equal", adjustable="datalim")
-            ax.set_ylabel(f"Txn1 — {timepoint}" if column == 0 else "", fontsize=8)
-            ax.set_title(condition if row == 0 else "", fontsize=9)
-            ax.text(0.02, 0.98, f"n={in_stratum.sum():,}", transform=ax.transAxes,
-                    va="top", ha="left", fontsize=7)
-            ax.set_xticks([])
-            ax.set_yticks([])
-
-    colorbar = fig.colorbar(points, ax=axes, location="right", shrink=0.35, pad=0.02, aspect=25)
-    ticks = np.linspace(txn1_low, txn1_high, 3)
-    colorbar.set_ticks(ticks, labels=[f"{tick:.2f}" for tick in ticks])
-    colorbar.ax.tick_params(labelsize=7)
-
-    plt.show()
-    plt.close(fig)
-
-
-def txn1_violin_stratified_slide(adata, txn1_df):
-    """Slide: Txn1 per cell type, condition within timepoint.
-
-    Grouped violins rather than four panels: NORM and OIR sit side by side within each cell
-    type's slot, so the comparison is a glance rather than a jump between figures.
-    Timepoint is the facet, which leaves the interaction readable down a column.
-    """
-    slide("Txn1 by cell type across the design")
-    stratified_violins(adata, txn1_df, facet_key="timepoint", hue_key="condition")
-
-
-def txn1_violin_stratified_by_condition_slide(adata, txn1_df):
-    """Slide: the same data with the roles swapped.
-
-    P14 and P17 side by side within each cell type, and condition as the facet. Reading
-    down a column here compares the two timepoints within a condition, where the plot above
-    compares the two conditions within a timepoint.
-    """
-    slide("Txn1 by cell type across the design, grouped by timepoint")
-    stratified_violins(adata, txn1_df, facet_key="condition", hue_key="timepoint")
-
-
-def stratified_violins(adata, txn1_df, facet_key, hue_key):
-    """Txn1 per cell type, one facet per level of `facet_key`, grouped by `hue_key`."""
-    cell_type_order = list(adata.obs["cell_type"].cat.categories)
-    facets = list(adata.obs[facet_key].cat.categories)
-    hue_order = list(adata.obs[hue_key].cat.categories)
-    palette = obs_palette(adata, hue_key)
-
-    fig, axes = plt.subplots(len(facets), 1, squeeze=False, sharex=True, sharey=True,
-                             figsize=(9, 5.0), constrained_layout=True)
-    for row, (ax, facet) in enumerate(zip(axes.flat, facets)):
-        in_facet = txn1_df[txn1_df[facet_key] == facet]
-        sns.violinplot(data=in_facet, x="cell_type", y="TXN1", order=cell_type_order,
-                       hue=hue_key, hue_order=hue_order, palette=palette,
-                       gap=0.1, cut=0, density_norm="width", inner="box",
-                       inner_kws=violin_inner_kws, linewidth=0.5, saturation=1,
-                       legend=(row == 0), ax=ax)
-        ax.set_ylabel(f"Txn1 — {facet}", fontsize=8)
-        ax.set_xlabel("")
-        ax.tick_params(axis="y", labelsize=6)
-        ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
-        ax.set_axisbelow(True)
-        sns.despine(ax=ax)
-
-    axes[0][0].legend(title="", fontsize=7, frameon=False,
-                      loc="center left", bbox_to_anchor=(1.0, 0.5))
-    axes[-1][0].tick_params(axis="x", labelrotation=45, labelsize=8)
-    for label in axes[-1][0].get_xticklabels():
-        label.set_ha("right")
-
-    plt.show()
-    plt.close(fig)
 ```
 
 ::: {.content-visible when-format="html"}
@@ -932,7 +112,7 @@ adata
 #| label: reference-centroids
 # MRCA, the mouse retina cell atlas (330,930 cells, all of it disease-free):
 # https://doi.org/10.1016/j.isci.2024.109916. Its majorclass column is the level the calls
-# come from — twelve classes, about what twenty clusters can resolve.
+# come from — twelve classes, about what 21 clusters can resolve.
 #
 # Aggregated over the whole atlas rather than its P14/P17 cells alone. That subset looks
 # like the right match for this design, but it holds no astrocytes at all, 50 RGCs, and
@@ -973,118 +153,1958 @@ else:
 
     reference_centroids.write_h5ad(centroid_path)
 
-# keyed on every class in the reference rather than only the ones called, so a cell type
-# keeps its colour across both batches whatever each one happens to find
-cell_type_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20))
-
 reference_centroids
 ```
 
 :::
 
+# WR_Joyal
+
+::: {.content-visible when-format="html"}
+
+## Cluster WR_Joyal
+
 ```{python}
-#| label: analyse-batches
-# ── everything that happens to the data, in order, for each batch ──
-for batch, settings in BATCHES.items():
-    display(Markdown(f"# {batch}"))
+#| label: cluster-wr-joyal
+wr_joyal_clustered_path = Path("data/processed/GSE150703_adata_WR_Joyal_clustered.h5ad")
 
-    batch_adata = cluster_batch(adata, batch)
-    for obs_key, palette in obs_palettes.items():
-        batch_adata.uns[f"{obs_key}_colors"] = [
-            palette[category] for category in batch_adata.obs[obs_key].cat.categories
-        ]
+if wr_joyal_clustered_path.exists():
+    wr_joyal = sc.read_h5ad(wr_joyal_clustered_path)
+else:
+    wr_joyal = adata[adata.obs["batch"] == "WR_Joyal"].copy()
 
-    resolution_keys = [column for column in batch_adata.obs.columns if column.endswith("_v0")]
-    for leiden_key_v0 in resolution_keys:
-        batch_adata.uns[f"{leiden_key_v0}_colors"] = [
-            mcolors.to_hex(plt.cm.tab20.colors[int(category) % 20])
-            for category in batch_adata.obs[leiden_key_v0].cat.categories
-        ]
+    for column in ["condition", "timepoint", "sort", "lab", "replicate", "batch"]:
+        wr_joyal.obs[column] = wr_joyal.obs[column].cat.remove_unused_categories()
 
-    umap_sweep_slide(batch_adata, resolution_keys)
-
-    ranked_key = rank_clusters(batch_adata, settings["resolution"])
-    html_section(
-        "Chosen resolution",
-        f"`{ranked_key}`: {batch_adata.obs[ranked_key].nunique()} clusters",
-        as_table(batch_adata.obs[ranked_key].value_counts()),
+    wr_joyal.var["mt"] = wr_joyal.var_names.str.startswith("MT-")
+    wr_joyal.var["ribo"] = wr_joyal.var_names.str.startswith(("RPS", "RPL"))
+    wr_joyal.var["hb"] = wr_joyal.var_names.str.startswith(("HBA-", "HBB-"))
+    sc.pp.calculate_qc_metrics(
+        wr_joyal,
+        qc_vars=["mt", "ribo", "hb"],
+        expr_type="log1p",
+        percent_top=None,
+        log1p=False,
+        inplace=True,
     )
 
-    umap_clusters_slide(batch_adata, ranked_key)
+    sc.pp.filter_genes(wr_joyal, min_cells=3)
+    sc.pp.highly_variable_genes(wr_joyal, n_top_genes=2000, flavor="seurat")
+    sc.pp.pca(wr_joyal, svd_solver="arpack")
+    sc.pp.neighbors(wr_joyal, n_neighbors=10, n_pcs=40)
+    sc.tl.umap(wr_joyal)
 
-    qc_df = sc.get.obs_df(batch_adata, keys=[ranked_key] + list(qc_metrics))
-    qc_violin_slide(batch_adata, qc_df)
-    qc_violin_by_cluster_slide(batch_adata, qc_df, ranked_key)
+    for resolution in [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5]:
+        sc.tl.leiden(
+            wr_joyal,
+            resolution=resolution,
+            key_added=f"leiden_res_{resolution:.2f}_v0",
+            flavor="igraph",
+            random_state=0,
+        )
 
-    reference_correlation, n_feature_genes = correlate_with_reference(
-        batch_adata, ranked_key, reference_centroids
-    )
-    html_section(
-        "Correlation with the reference",
-        f"{n_feature_genes} of {int(batch_adata.var['highly_variable'].sum())} "
-        f"variable genes found in the reference",
-        as_table(reference_correlation.round(3)),
-    )
-    heatmap_reference_slide(reference_correlation)
+    wr_joyal.write_h5ad(wr_joyal_clustered_path)
 
-    markers_present, marker_report = score_markers(batch_adata)
-    html_section("Marker scores", as_text(marker_report))
+wr_joyal
+```
 
-    score_df = sc.get.obs_df(batch_adata, keys=[ranked_key] + score_keys)
-    score_violin_by_cluster_slide(batch_adata, score_df, ranked_key)
-    umap_scores_slide(batch_adata)
-    dotplot_markers_slide(batch_adata, markers_present, ranked_key)
+```{python}
+#| label: palettes-wr-joyal
+obs_palettes = {
+    "condition": {"NORM": "#2AABB8", "OIR": "#E87D2A"},
+    "timepoint": {"P14": "#2855A0", "P17": "#D63650"},
+    "sort":      {"Cd73ft": "#C9A227", "WR": "#5DB85D"},
+    "lab":       {"Joyal": "#7B4FB5", "Mccarrol": "#A0522D"},
+    "batch":     {"Cd73ft_Joyal": "#C9A227", "WR_Joyal": "#5DB85D", "WR_Mccarrol": "#A0522D"},
+}
 
-    mean_scores = score_df.groupby(ranked_key, observed=True)[score_keys].mean()
-    mean_scores.columns = [cell_type.replace("_", " ") for cell_type in retina_markers]
-    heatmap_scores_slide(mean_scores)
+for obs_key, palette in obs_palettes.items():
+    categories = wr_joyal.obs[obs_key].cat.categories
+    wr_joyal.uns[f"{obs_key}_colors"] = [palette[category] for category in categories]
 
-    # the call is the best-correlating reference class, overridden by the sheet at the top.
-    # The marker scores stay in the document as an independent read on the same question.
-    cluster_calls = reference_correlation.idxmax(axis=1)
-    marker_calls = mean_scores.idxmax(axis=1)
-    cluster_calls.update(pd.Series(settings["overrides"]))
+# cells are drawn in this order, so whatever comes last sits on top. Shuffled, because the
+# matrix order is the order cells came off the sequencer and it buries whole clusters under
+# their neighbours. To put particular clusters on top instead, sort by the cluster column:
+#   draw_order = wr_joyal.obs[ranked_key].sort_values(ascending=False).index
+draw_order = np.random.default_rng(0).permutation(wr_joyal.n_obs)
 
-    batch_adata.obs["cell_type"] = batch_adata.obs[ranked_key].map(cluster_calls).astype("category")
-    batch_adata.uns["cell_type_colors"] = [
-        cell_type_palette[cell_type] for cell_type in batch_adata.obs["cell_type"].cat.categories
+resolution_keys = [column for column in wr_joyal.obs.columns if column.endswith("_v0")]
+
+for leiden_key_v0 in resolution_keys:
+    categories = wr_joyal.obs[leiden_key_v0].cat.categories
+    wr_joyal.uns[f"{leiden_key_v0}_colors"] = [
+        mcolors.to_hex(plt.cm.tab20.colors[int(category) % 20]) for category in categories
     ]
+```
 
-    # margin is the gap to the runner-up class: a cluster called on a hair's difference is
-    # one to read the heatmap for, however high its correlation
-    sorted_correlation = np.sort(reference_correlation.to_numpy(), axis=1)
-    call_table = pd.DataFrame({
-        "cell_type": cluster_calls,
-        "cells": batch_adata.obs[ranked_key].value_counts(),
-        "correlation": reference_correlation.max(axis=1).round(3),
-        "margin": (sorted_correlation[:, -1] - sorted_correlation[:, -2]).round(3),
-        "marker call": marker_calls,
+:::
+
+## Leiden sweep
+
+```{python}
+#| label: umap-sweep-wr-joyal
+for start in range(0, len(resolution_keys), 3):
+    group = resolution_keys[start:start + 3]
+
+    # the second row is the colorbar strip the score UMAPs use. It is reserved here too,
+    # and left empty, so both sets of panels have identical geometry and superimpose.
+    fig, axs = plt.subplots(2, 3, height_ratios=[1, 0.22], figsize=(8.6, 3.4),
+                            constrained_layout=True)
+    for ax, leiden_key_v0 in zip(axs[0], group):
+        sc.pl.umap(
+            wr_joyal[draw_order],
+            color=leiden_key_v0,
+            ax=ax,
+            legend_loc="on data",
+            legend_fontsize=9,
+            frameon=True,
+            show=False,
+        )
+        ax.set_aspect("equal", adjustable="datalim")
+
+    for bar_ax in axs[1]:
+        bar_ax.axis("off")
+
+    for empty_ax in axs[0][len(group):]:
+        fig.delaxes(empty_ax)
+
+    plt.show()
+    plt.close(fig)
+```
+
+::: {.content-visible when-format="html"}
+
+## Chosen resolution
+
+```{python}
+#| label: choose-resolution-wr-joyal
+wr_joyal_resolution = 1.0
+
+leiden_key = f"leiden_res_{wr_joyal_resolution:.2f}_v0"
+ranked_key = f"leiden_res_{wr_joyal_resolution:.2f}_v1"
+
+cluster_sizes = wr_joyal.obs[leiden_key].value_counts()
+ranked_labels = [str(rank) for rank in range(1, len(cluster_sizes) + 1)]
+size_rank = dict(zip(cluster_sizes.index, ranked_labels))
+
+wr_joyal.obs[ranked_key] = (
+    wr_joyal.obs[leiden_key]
+    .map(size_rank)
+    .astype("category")
+    .cat.reorder_categories(ranked_labels)
+)
+
+wr_joyal.uns[f"{ranked_key}_colors"] = [
+    mcolors.to_hex(plt.cm.tab20.colors[(int(label) - 1) % 20]) for label in ranked_labels
+]
+
+print(f"{ranked_key}: {wr_joyal.obs[ranked_key].nunique()} clusters")
+wr_joyal.obs[ranked_key].value_counts()
+```
+
+:::
+
+## Clusters on the UMAP
+
+```{python}
+#| label: umap-clusters-wr-joyal
+# scanpy builds the figure here, and takes no figsize argument, so rcParams is where its size
+# has to be set
+plt.rcParams["figure.figsize"] = (5.0, 4.3)
+
+ax = sc.pl.umap(
+    wr_joyal[draw_order],
+    color=ranked_key,
+    legend_loc="on data",
+    legend_fontoutline=2,
+    frameon=True,
+    show=False,
+)
+ax.set_aspect("equal", adjustable="datalim")
+plt.show()
+```
+
+## QC metrics
+
+```{python}
+#| label: qc-violin-wr-joyal
+qc_metrics = {
+    "n_genes_by_log1p": "Genes detected",
+    "total_log1p": "Total expression",
+    "pct_log1p_mt": "% mitochondrial",
+    "pct_log1p_ribo": "% ribosomal",
+    "pct_log1p_hb": "% hemoglobin",
+}
+violin_inner_kws = {"box_width": 2, "whis_width": 1, "marker": "o",
+                    "markersize": 3.0, "markeredgecolor": "white"}
+
+qc_df = sc.get.obs_df(wr_joyal, keys=[ranked_key] + list(qc_metrics))
+batch_color = wr_joyal.uns["batch_colors"][0]
+
+fig, axes = plt.subplots(1, len(qc_metrics), squeeze=False, figsize=(9, 3.0),
+                         constrained_layout=True)
+for ax, (qc_key, qc_label) in zip(axes.flat, qc_metrics.items()):
+    sns.violinplot(data=qc_df, y=qc_key, color=batch_color, cut=0, density_norm="width",
+                   inner="box", inner_kws=violin_inner_kws, linewidth=0.5, ax=ax)
+    ax.set_ylabel(qc_label, fontsize=9)
+    ax.tick_params(axis="y", labelsize=8)
+    ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+    ax.set_axisbelow(True)
+
+plt.show()
+plt.close(fig)
+```
+
+## QC metrics by cluster
+
+```{python}
+#| label: qc-violin-by-cluster-wr-joyal
+# only scanpy reads the _colors entry out of uns, so the palette is handed to seaborn
+# explicitly — otherwise a cluster changes color between the UMAP and these violins
+cluster_palette = dict(zip(wr_joyal.obs[ranked_key].cat.categories, wr_joyal.uns[f"{ranked_key}_colors"]))
+
+fig, axes = plt.subplots(len(qc_metrics), 1, squeeze=False, sharex=True, figsize=(9, 4.3),
+                         constrained_layout=True)
+for ax, (qc_key, qc_label) in zip(axes.flat, qc_metrics.items()):
+    # dodge=False because hue repeats x: left on, seaborn gives each of the 21 clusters its
+    # own sub-slot and every violin is drawn a twentieth of its slot wide, off its tick
+    sns.violinplot(data=qc_df, x=ranked_key, y=qc_key, hue=ranked_key, palette=cluster_palette,
+                   legend=False, dodge=False, cut=0, density_norm="width", inner="box",
+                   inner_kws=violin_inner_kws, linewidth=0.5, saturation=1, ax=ax)
+
+    # seaborn colours the bodies in an order that does not follow the x positions when hue
+    # repeats x, so each is recoloured from the cluster it actually sits under. The order
+    # comes off the categorical rather than the tick labels, which are empty on a shared axis.
+    cluster_order = list(wr_joyal.obs[ranked_key].cat.categories)
+    for body in ax.collections:
+        extents = body.get_paths()[0].get_extents()
+        body.set_facecolor(cluster_palette[cluster_order[round((extents.x0 + extents.x1) / 2)]])
+
+    ax.set_ylabel(qc_label, fontsize=7)
+    ax.set_xlabel("")
+    ax.tick_params(axis="y", labelsize=6)
+    ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+    ax.set_axisbelow(True)
+
+axes[-1][0].set_xlabel("Cluster", fontsize=9)
+axes[-1][0].tick_params(axis="x", labelsize=8)
+plt.show()
+plt.close(fig)
+```
+
+::: {.content-visible when-format="html"}
+
+## Correlation with the reference
+
+```{python}
+#| label: correlate-reference-wr-joyal
+# correlated over the query's variable genes rather than everything shared: the
+# housekeeping bulk is near-identical in every class and only lifts all twelve correlations
+# together, flattening the differences the call is made on
+feature_genes = [
+    gene for gene in wr_joyal.var_names[wr_joyal.var["highly_variable"]]
+    if gene in reference_centroids.var_names
+]
+
+cluster_profiles = pd.DataFrame(
+    [
+        np.asarray(
+            wr_joyal[wr_joyal.obs[ranked_key] == cluster, feature_genes].X.mean(axis=0)
+        ).ravel()
+        for cluster in wr_joyal.obs[ranked_key].cat.categories
+    ],
+    index=wr_joyal.obs[ranked_key].cat.categories,
+    columns=feature_genes,
+)
+reference_profiles = pd.DataFrame(
+    reference_centroids[:, feature_genes].X,
+    index=reference_centroids.obs_names,
+    columns=feature_genes,
+)
+
+# Spearman, so a class is matched on the order it puts the genes in rather than on absolute
+# levels — the two datasets were normalized by different pipelines. Ranking the rows and
+# taking Pearson is the same thing, and does all 21 x 12 pairs in one call.
+ranked_clusters = cluster_profiles.rank(axis=1)
+ranked_reference = reference_profiles.rank(axis=1)
+reference_correlation = pd.DataFrame(
+    np.corrcoef(ranked_clusters, ranked_reference)[:len(ranked_clusters), len(ranked_clusters):],
+    index=cluster_profiles.index,
+    columns=reference_profiles.index,
+)
+
+print(f"{len(feature_genes)} of {int(wr_joyal.var['highly_variable'].sum())} "
+      f"variable genes found in the reference")
+reference_correlation.round(3)
+```
+
+:::
+
+## Correlation with the reference by cluster
+
+```{python}
+#| label: heatmap-reference-wr-joyal
+# the same matrix three ways, matching the marker heatmap. The raw correlations sit in a
+# narrow band, so the two scaled panels are what can actually be read: down a column asks
+# "which cluster is most this class", and across a row asks "which class best fits this
+# cluster" — the annotation question, and the one the calls are taken from.
+#
+# only the row scaling is a call. A column's brightest cell is the best home for that class
+# whether or not the class is present at all: RPE peaks on a rod cluster here, which says
+# where it would land rather than that it was found.
+class_range = reference_correlation.max(axis=0) - reference_correlation.min(axis=0)
+scaled_by_class = reference_correlation.sub(
+    reference_correlation.min(axis=0), axis=1
+).div(class_range, axis=1)
+
+correlation_range = reference_correlation.max(axis=1) - reference_correlation.min(axis=1)
+scaled_correlation = reference_correlation.sub(
+    reference_correlation.min(axis=1), axis=0
+).div(correlation_range, axis=0)
+
+correlation_panels = {
+    "Spearman correlation": reference_correlation,
+    "Scaled per class": scaled_by_class,
+    "Scaled per cluster": scaled_correlation,
+}
+
+# walk the clusters in order and take each one's best class; a class already placed is
+# skipped, and any class no cluster leads with is appended. The matches then read as a
+# diagonal rather than being scattered across the panel.
+class_order = []
+for cluster in scaled_correlation.index:
+    best = scaled_correlation.loc[cluster].idxmax()
+    if best not in class_order:
+        class_order.append(best)
+class_order += [name for name in scaled_correlation.columns if name not in class_order]
+
+fig, axes = plt.subplots(1, len(correlation_panels), squeeze=False, figsize=(9, 4.3),
+                         constrained_layout=True)
+for ax, (title, matrix) in zip(axes.flat, correlation_panels.items()):
+    # xticklabels/yticklabels left at "auto" thins the labels to every other one once a
+    # third panel is on the figure, which leaves half the classes unnamed
+    sns.heatmap(matrix[class_order], cmap="viridis", linewidths=0.5, linecolor="white",
+                xticklabels=True, yticklabels=True,
+                cbar_kws={"shrink": 0.6, "pad": 0.02}, ax=ax)
+    ax.set_title(title, fontsize=9)
+    ax.set_xlabel("Reference class", fontsize=8)
+    ax.set_ylabel("Cluster", fontsize=8)
+    ax.tick_params(axis="x", labelrotation=45, labelsize=7)
+    ax.tick_params(axis="y", labelrotation=0, labelsize=7)
+    for label in ax.get_xticklabels():
+        label.set_ha("right")
+
+plt.show()
+plt.close(fig)
+```
+
+::: {.content-visible when-format="html"}
+
+## Marker scores
+
+```{python}
+#| label: score-markers-wr-joyal
+retina_markers = {
+    "Rods": ["Rho", "Pde6b", "Nrl", "Nr2e3"],
+    "Cones": ["Opn1mw", "Opn1sw", "Arr3", "Thrb"],
+    "RGC": ["Rbpms", "Sncg", "Pou4f1", "Pou4f2"],
+    "Amacrine": ["Tfap2a", "Tfap2b", "Chat", "Vsx1"],
+    "Bipolar": ["Vsx2", "Isl1", "Prkca", "Cabp5"],
+    "Horizontal": ["Onecut1", "Onecut2", "Lhx1", "Prox1"],
+    "Muller_Glia": ["Rlbp1", "Glul", "Sox9", "Slc1a3"],
+    "Microglia": ["Cx3cr1", "P2ry12", "Tmem119", "Aif1"],
+    "Vascular_Endothelial": ["Cdh5", "Pecam1", "Tek"],
+    "Pericytes": ["Pdgfrb", "Acta2", "Des"],
+    "Astrocytes": ["Gfap", "Aldh1l1", "Aqp4"],
+}
+
+score_keys = []
+markers_present = {}
+for cell_type, genes in retina_markers.items():
+    present = [gene.upper() for gene in genes if gene.upper() in wr_joyal.var_names]
+    score_key = f"score_{cell_type}"
+    sc.tl.score_genes(wr_joyal, gene_list=present, score_name=score_key)
+    score_keys.append(score_key)
+    markers_present[cell_type] = present
+    print(f"{cell_type}: {len(present)}/{len(genes)} markers")
+```
+
+:::
+
+## Marker scores by cluster
+
+```{python}
+#| label: score-violin-by-cluster-wr-joyal
+score_df = sc.get.obs_df(wr_joyal, keys=[ranked_key] + score_keys)
+
+for start in range(0, len(score_keys), 6):
+    group = score_keys[start:start + 6]
+    group_types = list(retina_markers)[start:start + 6]
+
+    fig, axes = plt.subplots(len(group), 1, squeeze=False, sharex=True, figsize=(9, 4.3),
+                             constrained_layout=True)
+    for ax, score_key, cell_type in zip(axes.flat, group, group_types):
+        sns.violinplot(data=score_df, x=ranked_key, y=score_key, hue=ranked_key,
+                       palette=cluster_palette, legend=False, dodge=False, cut=0,
+                       density_norm="width", inner="box", inner_kws=violin_inner_kws,
+                       linewidth=0.5, saturation=1, ax=ax)
+
+        cluster_order = list(wr_joyal.obs[ranked_key].cat.categories)
+        for body in ax.collections:
+            extents = body.get_paths()[0].get_extents()
+            body.set_facecolor(cluster_palette[cluster_order[round((extents.x0 + extents.x1) / 2)]])
+
+        ax.set_ylabel(f"{cell_type.replace('_', ' ')} score", fontsize=7)
+        ax.set_xlabel("")
+        ax.tick_params(axis="y", labelsize=6)
+        ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+        ax.set_axisbelow(True)
+
+    axes[-1][0].set_xlabel("Cluster", fontsize=9)
+    axes[-1][0].tick_params(axis="x", labelsize=8)
+    plt.show()
+    plt.close(fig)
+```
+
+## Marker scores on the UMAP
+
+```{python}
+#| label: umap-scores-wr-joyal
+for start in range(0, len(score_keys), 3):
+    group = score_keys[start:start + 3]
+
+    fig, axs = plt.subplots(2, 3, height_ratios=[1, 0.22], figsize=(8.6, 3.4),
+                            constrained_layout=True)
+    for ax, bar_ax, score_key in zip(axs[0], axs[1], group):
+        sc.pl.umap(
+            wr_joyal,
+            color=score_key,
+            ax=ax,
+            frameon=True,
+            colorbar_loc=None,
+            show=False,
+        )
+        ax.set_aspect("equal", adjustable="datalim")
+
+        # the strip reserves the space; the colorbar drawn inside it is excluded from the
+        # layout so its tick labels cannot push the panel around
+        bar_ax.axis("off")
+        colorbar_ax = bar_ax.inset_axes([0.325, 0.82, 0.35, 0.18])
+        colorbar_ax.set_in_layout(False)
+        colorbar = fig.colorbar(ax.collections[0], cax=colorbar_ax, orientation="horizontal")
+
+        # placed explicitly at the ends and middle: the automatic locator picks its own round
+        # numbers per score, so the tick count and positions differ from panel to panel
+        score_low, score_high = ax.collections[0].get_clim()
+        colorbar_ticks = np.linspace(score_low, score_high, 3)
+        colorbar.set_ticks(colorbar_ticks, labels=[f"{tick:.2f}" for tick in colorbar_ticks])
+        colorbar.ax.tick_params(labelsize=7)
+
+    for empty_ax in axs[0][len(group):]:
+        fig.delaxes(empty_ax)
+    for empty_bar_ax in axs[1][len(group):]:
+        empty_bar_ax.axis("off")
+
+    plt.show()
+    plt.close(fig)
+```
+
+## Marker genes by cluster
+
+```{python}
+#| label: dotplot-markers-wr-joyal
+# figsize is deliberately not passed: dotplot derives its own from the gene and cluster counts,
+# and forcing it to slide dimensions packs 41 genes across 21 clusters until the dots overlap
+sc.pl.dotplot(wr_joyal, markers_present, groupby=ranked_key, standard_scale="var")
+```
+
+## Marker score heatmap
+
+```{python}
+#| label: heatmap-scores-wr-joyal
+mean_scores = score_df.groupby(ranked_key, observed=True)[score_keys].mean()
+mean_scores.columns = [cell_type.replace("_", " ") for cell_type in retina_markers]
+
+# the same matrix three ways, because they answer different questions: the raw means show
+# magnitude, scaling down a column asks "which cluster is most this cell type", and scaling
+# across a row asks "which cell type best fits this cluster" — the annotation question
+scaled_by_type = (mean_scores - mean_scores.min()) / (mean_scores.max() - mean_scores.min())
+row_range = mean_scores.max(axis=1) - mean_scores.min(axis=1)
+scaled_by_cluster = mean_scores.sub(mean_scores.min(axis=1), axis=0).div(row_range, axis=0)
+
+score_normalizations = {
+    "Mean score": mean_scores,
+    "Scaled per cell type": scaled_by_type,
+    "Scaled per cluster": scaled_by_cluster,
+}
+
+# walk the clusters in order and take each one's best cell type; a type already placed is
+# skipped, and any type no cluster leads with is appended. The matches then read as a
+# diagonal rather than being scattered across the panel.
+column_order = []
+for cluster in scaled_by_cluster.index:
+    best = scaled_by_cluster.loc[cluster].idxmax()
+    if best not in column_order:
+        column_order.append(best)
+column_order += [c for c in scaled_by_cluster.columns if c not in column_order]
+
+fig, axes = plt.subplots(1, len(score_normalizations), squeeze=False, figsize=(9, 4.3),
+                         constrained_layout=True)
+for ax, (title, matrix) in zip(axes.flat, score_normalizations.items()):
+    # as on the reference heatmap: left at "auto" the labels thin to every other one across
+    # three panels, which leaves half the cell types and half the clusters unnamed
+    sns.heatmap(matrix[column_order], cmap="viridis", linewidths=0.5, linecolor="white",
+                xticklabels=True, yticklabels=True,
+                cbar_kws={"shrink": 0.6, "pad": 0.02}, ax=ax)
+    ax.set_title(title, fontsize=9)
+    ax.set_xlabel("Cell type", fontsize=8)
+    ax.set_ylabel("Cluster", fontsize=8)
+    ax.tick_params(axis="x", labelrotation=45, labelsize=7)
+    ax.tick_params(axis="y", labelrotation=0, labelsize=7)
+    for label in ax.get_xticklabels():
+        label.set_ha("right")
+
+plt.show()
+plt.close(fig)
+```
+
+::: {.content-visible when-format="html"}
+
+## Preliminary cell types
+
+```{python}
+#| label: annotate-clusters-wr-joyal
+# the call is the best-correlating reference class. The marker scores stay in the document
+# as an independent read on the same question — where the two disagree, the disagreement is
+# the thing to look at before writing an override.
+cluster_calls = reference_correlation.idxmax(axis=1)
+marker_calls = mean_scores.idxmax(axis=1)
+
+# every cluster called by hand after reading the heatmap and the dotplot above, so the sheet
+# is exhaustive rather than a list of exceptions and the argmax above is fully shadowed. As
+# written it ratifies the reference on all 21 clusters — including the two the marker panel
+# reads differently, 10 (AC, not Horizontal: 702 cells is far too many for HC, and the
+# panel's Prox1/Lhx1 are expressed in amacrine subsets) and 20 (Astrocyte, not Muller Glia).
+# A cluster left out would fall back to its argmax.
+cluster_call_overrides = {
+    "1": "Rod",
+    "2": "BC",
+    "3": "Rod",
+    "4": "BC",
+    "5": "MG",
+    "6": "Rod",
+    "7": "AC",
+    "8": "BC",
+    "9": "Rod",
+    "10": "AC",
+    "11": "Cone",
+    "12": "BC",
+    "13": "AC",
+    "14": "AC",
+    "15": "RGC",
+    "16": "Endothelial",
+    "17": "HC",
+    "18": "Microglia",
+    "19": "AC",
+    "20": "Astrocyte",
+    "21": "MG",
+}
+cluster_calls.update(pd.Series(cluster_call_overrides))
+
+wr_joyal.obs["cell_type"] = wr_joyal.obs[ranked_key].map(cluster_calls).astype("category")
+
+# keyed on every class in the reference rather than only the ones called, so a cell type
+# keeps its colour whatever a given resolution happens to find
+cell_type_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20))
+wr_joyal.uns["cell_type_colors"] = [
+    cell_type_palette[cell_type] for cell_type in wr_joyal.obs["cell_type"].cat.categories
+]
+
+# margin is the gap to the runner-up class: a cluster called on a hair's difference is one
+# to read the heatmap for, however high its correlation
+sorted_correlation = np.sort(reference_correlation.to_numpy(), axis=1)
+
+pd.DataFrame({
+    "cell_type": cluster_calls,
+    "cells": wr_joyal.obs[ranked_key].value_counts(),
+    "correlation": reference_correlation.max(axis=1).round(3),
+    "margin": (sorted_correlation[:, -1] - sorted_correlation[:, -2]).round(3),
+    "marker call": marker_calls,
+})
+```
+
+## Refining a call with the marker scores
+
+```{python}
+#| label: refine-cell-types-wr-joyal
+# the reference calls a whole cluster one class, so a population that never forms its own
+# cluster cannot be named — the vascular cells here are one cluster of 106 holding both
+# endothelium and pericytes. Where the marker panel says a cluster holds two classes, the
+# cells are split: each goes to whichever of the two scores is higher, provided that score
+# clears zero. score_genes centres a score on a control gene set, so above zero means
+# enriched above background; a cell clearing neither keeps the cluster's call rather than
+# being sent one way on noise.
+#
+# the assignment itself has no threshold to choose — the two scores are compared against
+# each other — but which clusters get split is gated below, because a disagreement between
+# the reference and the panel is not on its own evidence that a cluster holds two things.
+
+# the reference names classes and the marker panel names them differently; the two
+# vocabularies have to be joined by hand, and everything else here is derived from the join
+marker_to_class = {
+    "Rods": "Rod",                          "Cones": "Cone",
+    "RGC": "RGC",                           "Amacrine": "AC",
+    "Bipolar": "BC",                        "Horizontal": "HC",
+    "Muller_Glia": "MG",                    "Microglia": "Microglia",
+    "Vascular_Endothelial": "Endothelial",
+    "Pericytes": "Pericyte",                "Astrocytes": "Astrocyte",
+}
+
+# score_genes wrote score_<panel name>; mean_scores spaced the same names out for its axis
+class_scores = {cls: f"score_{panel}" for panel, cls in marker_to_class.items()}
+rival_calls = marker_calls.map(
+    {panel.replace("_", " "): cls for panel, cls in marker_to_class.items()}
+)
+
+# a cluster is a candidate exactly when the reference and the panel name it differently: one
+# of them is wrong, or — the case this chunk is for — the cluster holds both. The pair falls
+# out of the disagreement, the call above being the parent and the panel's answer the child.
+cluster_refinements = {
+    cluster: (cluster_calls[cluster], rival_calls[cluster])
+    for cluster in cluster_calls.index
+    if cluster_calls[cluster] != rival_calls[cluster]
+}
+
+# a disagreement says where to look, not what to do: the panels are not on a common scale,
+# so a panel of bright genes annexes cells from a dim one wherever the two are compared. The
+# split is therefore only applied where the cluster actually looks like two populations.
+#
+# the test is the L in the scatter below, written as a number. In a mixed cluster the two
+# scores trade off — a cell high on one is low on the other — so the rank correlation
+# between them across the cluster runs negative. In one population with a depth gradient
+# both scores rise and fall together and the correlation runs positive; cutting that at the
+# diagonal halves a gradient at an arbitrary place rather than finding a boundary. Requiring
+# both arms to be a real fraction of the cluster then throws out splits that shave off a
+# handful of cells.
+#
+# the scores have to actually trade off, not merely fail to correlate: a cluster sitting at
+# zero has the two scores independent of each other, which is a cloud rather than an L and
+# says nothing about there being two populations in it. The vascular cluster runs -0.75 and
+# the next candidate ten times weaker, so the cut is set between them rather than at zero.
+max_tradeoff = -0.25
+min_arm_cells = 10
+min_arm_fraction = 0.05
+
+split_diagnostics = []
+for cluster, (parent_class, child_class) in cluster_refinements.items():
+    in_cluster = (wr_joyal.obs[ranked_key] == cluster).to_numpy()
+    parent_score = wr_joyal.obs[class_scores[parent_class]].to_numpy()
+    child_score = wr_joyal.obs[class_scores[child_class]].to_numpy()
+
+    reassigned = in_cluster & (child_score > parent_score) & (child_score > 0)
+    n_cluster = int(in_cluster.sum())
+    n_child = int(reassigned.sum())
+
+    tradeoff = np.corrcoef(
+        pd.Series(parent_score[in_cluster]).rank(),
+        pd.Series(child_score[in_cluster]).rank(),
+    )[0, 1]
+    smallest_arm = min(n_child, n_cluster - n_child)
+    applied = bool(
+        tradeoff < max_tradeoff
+        and smallest_arm >= max(min_arm_cells, min_arm_fraction * n_cluster)
+    )
+
+    if applied:
+        if child_class not in wr_joyal.obs["cell_type"].cat.categories:
+            wr_joyal.obs["cell_type"] = (
+                wr_joyal.obs["cell_type"].cat.add_categories([child_class])
+            )
+        wr_joyal.obs.loc[reassigned, "cell_type"] = child_class
+
+    split_diagnostics.append({
+        "cluster": cluster,
+        "parent": parent_class,
+        "child": child_class,
+        "cells": n_cluster,
+        "would move": n_child,
+        "tradeoff": round(tradeoff, 3),
+        "applied": applied,
     })
-    html_section("Cell types called", as_table(call_table))
 
-    refinements, diagnostics = refine_cell_types(
-        batch_adata, ranked_key, cluster_calls, marker_calls, cell_type_palette
+# a rejected row is not a failure: the cluster keeps its whole-cluster call, and the row is
+# the record of the panel having been overruled
+print(pd.DataFrame(split_diagnostics).to_string(index=False))
+split_applied = {row["cluster"]: row["applied"] for row in split_diagnostics}
+
+# a class added above lands at the end of the categories, which would put it last on every
+# axis downstream rather than in with the rest
+wr_joyal.obs["cell_type"] = wr_joyal.obs["cell_type"].cat.remove_unused_categories()
+wr_joyal.obs["cell_type"] = wr_joyal.obs["cell_type"].cat.reorder_categories(
+    sorted(wr_joyal.obs["cell_type"].cat.categories)
+)
+wr_joyal.uns["cell_type_colors"] = [
+    cell_type_palette[cell_type] for cell_type in wr_joyal.obs["cell_type"].cat.categories
+]
+
+wr_joyal.obs["cell_type"].value_counts()
+```
+
+:::
+
+## Cells reassigned by marker score
+
+```{python}
+#| label: refine-scatter-wr-joyal
+# the two scores against each other, one panel per refinement. A cluster worth splitting
+# looks like an L — each arm high on one score and flat on the other, with the middle
+# empty. A diffuse cloud across the diagonal means the two classes are not separable this
+# way, and the cluster should be left alone.
+fig, axes = plt.subplots(1, len(cluster_refinements), squeeze=False,
+                         figsize=(4.3 * len(cluster_refinements), 3.6),
+                         constrained_layout=True)
+for ax, (cluster, (parent_class, child_class)) in zip(axes.flat, cluster_refinements.items()):
+    in_cluster = (wr_joyal.obs[ranked_key] == cluster).to_numpy()
+    cluster_cells = sc.get.obs_df(
+        wr_joyal,
+        keys=[class_scores[parent_class], class_scores[child_class], "cell_type"],
+    )[in_cluster]
+
+    for called_class in [parent_class, child_class]:
+        is_called = (cluster_cells["cell_type"] == called_class).to_numpy()
+        ax.scatter(
+            cluster_cells[class_scores[parent_class]][is_called],
+            cluster_cells[class_scores[child_class]][is_called],
+            s=14, c=cell_type_palette[called_class], linewidths=0,
+            label=f"{called_class} ({is_called.sum()})",
+        )
+
+    # the decision boundary is the diagonal, which is the whole point of comparing the two
+    # scores rather than cutting one of them at a number
+    span = [
+        cluster_cells[[class_scores[parent_class], class_scores[child_class]]].min().min(),
+        cluster_cells[[class_scores[parent_class], class_scores[child_class]]].max().max(),
+    ]
+    ax.plot(span, span, color="#b0b0b0", linewidth=1.0, linestyle="--", zorder=0)
+
+    verdict = "split" if split_applied[cluster] else "left whole"
+    ax.set_title(f"Cluster {cluster} — {verdict}", fontsize=9)
+    ax.set_xlabel(f"{parent_class} score", fontsize=8)
+    ax.set_ylabel(f"{child_class} score", fontsize=8)
+    ax.tick_params(labelsize=7)
+    ax.legend(fontsize=7, frameon=False, loc="upper right")
+
+plt.show()
+plt.close(fig)
+```
+
+## Preliminary cell types on the UMAP
+
+```{python}
+#| label: umap-cell-types-wr-joyal
+plt.rcParams["figure.figsize"] = (6.5, 4.3)
+
+ax = sc.pl.umap(
+    wr_joyal[draw_order],
+    color="cell_type",
+    frameon=True,
+    show=False,
+)
+ax.set_aspect("equal", adjustable="datalim")
+plt.show()
+```
+
+## Txn1 on the UMAP
+
+```{python}
+#| label: umap-txn1-wr-joyal
+fig, axs = plt.subplots(2, 1, height_ratios=[1, 0.22], figsize=(4.3, 3.9),
+                        constrained_layout=True)
+
+sc.pl.umap(wr_joyal, color="TXN1", ax=axs[0], frameon=True, colorbar_loc=None, show=False)
+axs[0].set_aspect("equal", adjustable="datalim")
+
+axs[1].axis("off")
+colorbar_ax = axs[1].inset_axes([0.325, 0.82, 0.35, 0.18])
+colorbar_ax.set_in_layout(False)
+colorbar = fig.colorbar(axs[0].collections[0], cax=colorbar_ax, orientation="horizontal")
+
+txn1_low, txn1_high = axs[0].collections[0].get_clim()
+colorbar_ticks = np.linspace(txn1_low, txn1_high, 3)
+colorbar.set_ticks(colorbar_ticks, labels=[f"{tick:.2f}" for tick in colorbar_ticks])
+colorbar.ax.tick_params(labelsize=7)
+
+plt.show()
+plt.close(fig)
+```
+
+## Txn1 by cell type
+
+```{python}
+#| label: txn1-violin-celltype-wr-joyal
+txn1_df = sc.get.obs_df(wr_joyal, keys=["TXN1", "cell_type", "condition", "timepoint"])
+
+fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
+sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", hue="cell_type",
+               palette=cell_type_palette, legend=True, dodge=False, cut=0,
+               density_norm="width", inner="box", inner_kws=violin_inner_kws,
+               linewidth=0.5, saturation=1, ax=ax)
+
+# with hue repeating x and dodge off, seaborn hands the bodies their colours in an order
+# that does not follow the x positions — the legend ends up right and the violins wrong.
+# Recolour each body from the cell type it actually sits under.
+cell_type_order = list(wr_joyal.obs["cell_type"].cat.categories)
+for body in ax.collections:
+    extents = body.get_paths()[0].get_extents()
+    body.set_facecolor(cell_type_palette[cell_type_order[round((extents.x0 + extents.x1) / 2)]])
+
+ax.set_xlabel("")
+ax.set_ylabel("Txn1 (log1p)", fontsize=9)
+ax.tick_params(axis="x", labelrotation=45, labelsize=8)
+ax.tick_params(axis="y", labelsize=8)
+ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+ax.set_axisbelow(True)
+for label in ax.get_xticklabels():
+    label.set_ha("right")
+ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
+
+plt.show()
+plt.close(fig)
+```
+
+## Txn1 by cell type and condition
+
+```{python}
+#| label: txn1-violin-condition-wr-joyal
+condition_palette = dict(zip(wr_joyal.obs["condition"].cat.categories,
+                             wr_joyal.uns["condition_colors"]))
+
+fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
+sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", hue="condition",
+               palette=condition_palette, cut=0, density_norm="width", inner="box",
+               inner_kws=violin_inner_kws, linewidth=0.5, ax=ax)
+ax.set_xlabel("")
+ax.set_ylabel("Txn1 (log1p)", fontsize=9)
+ax.tick_params(axis="x", labelrotation=45, labelsize=8)
+ax.tick_params(axis="y", labelsize=8)
+ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+ax.set_axisbelow(True)
+for label in ax.get_xticklabels():
+    label.set_ha("right")
+ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
+
+plt.show()
+plt.close(fig)
+```
+
+## Txn1 by cell type and timepoint
+
+```{python}
+#| label: txn1-violin-timepoint-wr-joyal
+timepoint_palette = dict(zip(wr_joyal.obs["timepoint"].cat.categories,
+                             wr_joyal.uns["timepoint_colors"]))
+
+fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
+sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", hue="timepoint",
+               palette=timepoint_palette, cut=0, density_norm="width", inner="box",
+               inner_kws=violin_inner_kws, linewidth=0.5, ax=ax)
+ax.set_xlabel("")
+ax.set_ylabel("Txn1 (log1p)", fontsize=9)
+ax.tick_params(axis="x", labelrotation=45, labelsize=8)
+ax.tick_params(axis="y", labelsize=8)
+ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+ax.set_axisbelow(True)
+for label in ax.get_xticklabels():
+    label.set_ha("right")
+ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
+
+plt.show()
+plt.close(fig)
+```
+
+## Txn1 across the design
+
+```{python}
+#| label: umap-txn1-stratified-wr-joyal
+# laid out like the violin slides below: timepoint down the rows, condition across the
+# columns, so the same comparison sits in the same direction in every Txn1 figure
+condition_order = list(wr_joyal.obs["condition"].cat.categories)
+timepoints = list(wr_joyal.obs["timepoint"].cat.categories)
+
+umap_coords = wr_joyal.obsm["X_umap"]
+txn1 = sc.get.obs_df(wr_joyal, keys=["TXN1"])["TXN1"].to_numpy()
+txn1_low, txn1_high = txn1.min(), txn1.max()
+
+# drawn with scatter rather than sc.pl.umap: it puts the whole embedding underneath in grey,
+# and it fixes the point size, which scanpy scales by cell count — the sparse panels would
+# otherwise carry much larger points than the dense ones.
+fig, axes = plt.subplots(len(timepoints), len(condition_order), squeeze=False,
+                         figsize=(5.6, 4.4), constrained_layout=True)
+fig.get_layout_engine().set(w_pad=0.01, h_pad=0.01, wspace=0.01, hspace=0.02)
+for row, timepoint in enumerate(timepoints):
+    for column, condition in enumerate(condition_order):
+        ax = axes[row][column]
+        in_stratum = (
+            (wr_joyal.obs["timepoint"] == timepoint) & (wr_joyal.obs["condition"] == condition)
+        ).to_numpy()
+
+        # every cell in grey, so each panel is read against the same outline rather than
+        # appearing to be a differently-shaped dataset
+        ax.scatter(umap_coords[:, 0], umap_coords[:, 1], s=1, c="#bfbfbf", linewidths=0)
+        points = ax.scatter(umap_coords[in_stratum, 0], umap_coords[in_stratum, 1], s=1,
+                            c=txn1[in_stratum], cmap="viridis",
+                            vmin=txn1_low, vmax=txn1_high, linewidths=0)
+
+        ax.set_aspect("equal", adjustable="datalim")
+        ax.set_ylabel(f"Txn1 — {timepoint}" if column == 0 else "", fontsize=8)
+        ax.set_title(condition if row == 0 else "", fontsize=9)
+        ax.text(0.02, 0.98, f"n={in_stratum.sum():,}", transform=ax.transAxes,
+                va="top", ha="left", fontsize=7)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+colorbar = fig.colorbar(points, ax=axes, location="right", shrink=0.35, pad=0.02, aspect=25)
+colorbar_ticks = np.linspace(txn1_low, txn1_high, 3)
+colorbar.set_ticks(colorbar_ticks, labels=[f"{tick:.2f}" for tick in colorbar_ticks])
+colorbar.ax.tick_params(labelsize=7)
+
+plt.show()
+plt.close(fig)
+```
+
+## Txn1 by cell type across the design
+
+```{python}
+#| label: txn1-violin-stratified-wr-joyal
+cell_type_order = list(wr_joyal.obs["cell_type"].cat.categories)
+condition_order = list(wr_joyal.obs["condition"].cat.categories)
+timepoints = list(wr_joyal.obs["timepoint"].cat.categories)
+
+# grouped violins rather than four panels: NORM and OIR sit side by side within each cell
+# type's slot, so the comparison is a glance rather than a jump between figures. Timepoint is
+# the facet, which leaves the interaction readable down a column.
+fig, axes = plt.subplots(len(timepoints), 1, squeeze=False, sharex=True, sharey=True,
+                         figsize=(9, 5.0), constrained_layout=True)
+for row, (ax, timepoint) in enumerate(zip(axes.flat, timepoints)):
+    at_timepoint = txn1_df[txn1_df["timepoint"] == timepoint]
+    sns.violinplot(data=at_timepoint, x="cell_type", y="TXN1", order=cell_type_order,
+                   hue="condition", hue_order=condition_order, palette=condition_palette,
+                   gap=0.1, cut=0, density_norm="width", inner="box",
+                   inner_kws=violin_inner_kws, linewidth=0.5, saturation=1,
+                   legend=(row == 0), ax=ax)
+    ax.set_ylabel(f"Txn1 — {timepoint}", fontsize=8)
+    ax.set_xlabel("")
+    ax.tick_params(axis="y", labelsize=6)
+    ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+    ax.set_axisbelow(True)
+    sns.despine(ax=ax)
+
+axes[0][0].legend(title="", fontsize=7, frameon=False,
+                  loc="center left", bbox_to_anchor=(1.0, 0.5))
+axes[-1][0].tick_params(axis="x", labelrotation=45, labelsize=8)
+for label in axes[-1][0].get_xticklabels():
+    label.set_ha("right")
+
+plt.show()
+plt.close(fig)
+```
+
+## Txn1 by cell type across the design, grouped by timepoint
+
+```{python}
+#| label: txn1-violin-stratified-by-condition-wr-joyal
+timepoint_palette = dict(zip(wr_joyal.obs["timepoint"].cat.categories,
+                             wr_joyal.uns["timepoint_colors"]))
+
+# the same data with the roles swapped: P14 and P17 side by side within each cell type, and
+# condition as the facet. Reading down a column here compares the two timepoints within a
+# condition, where the plot above compares the two conditions within a timepoint.
+fig, axes = plt.subplots(len(condition_order), 1, squeeze=False, sharex=True, sharey=True,
+                         figsize=(9, 5.0), constrained_layout=True)
+for row, (ax, condition) in enumerate(zip(axes.flat, condition_order)):
+    in_condition = txn1_df[txn1_df["condition"] == condition]
+    sns.violinplot(data=in_condition, x="cell_type", y="TXN1", order=cell_type_order,
+                   hue="timepoint", hue_order=timepoints, palette=timepoint_palette,
+                   gap=0.1, cut=0, density_norm="width", inner="box",
+                   inner_kws=violin_inner_kws, linewidth=0.5, saturation=1,
+                   legend=(row == 0), ax=ax)
+    ax.set_ylabel(f"Txn1 — {condition}", fontsize=8)
+    ax.set_xlabel("")
+    ax.tick_params(axis="y", labelsize=6)
+    ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+    ax.set_axisbelow(True)
+    sns.despine(ax=ax)
+
+axes[0][0].legend(title="", fontsize=7, frameon=False,
+                  loc="center left", bbox_to_anchor=(1.0, 0.5))
+axes[-1][0].tick_params(axis="x", labelrotation=45, labelsize=8)
+for label in axes[-1][0].get_xticklabels():
+    label.set_ha("right")
+
+plt.show()
+plt.close(fig)
+```
+
+# Cd73ft_Joyal
+
+::: {.content-visible when-format="html"}
+
+## Cluster Cd73ft_Joyal
+
+```{python}
+#| label: cluster-cd73ft-joyal
+cd73ft_joyal_clustered_path = Path("data/processed/GSE150703_adata_Cd73ft_Joyal_clustered.h5ad")
+
+if cd73ft_joyal_clustered_path.exists():
+    cd73ft_joyal = sc.read_h5ad(cd73ft_joyal_clustered_path)
+else:
+    cd73ft_joyal = adata[adata.obs["batch"] == "Cd73ft_Joyal"].copy()
+
+    for column in ["condition", "timepoint", "sort", "lab", "replicate", "batch"]:
+        cd73ft_joyal.obs[column] = cd73ft_joyal.obs[column].cat.remove_unused_categories()
+
+    cd73ft_joyal.var["mt"] = cd73ft_joyal.var_names.str.startswith("MT-")
+    cd73ft_joyal.var["ribo"] = cd73ft_joyal.var_names.str.startswith(("RPS", "RPL"))
+    cd73ft_joyal.var["hb"] = cd73ft_joyal.var_names.str.startswith(("HBA-", "HBB-"))
+    sc.pp.calculate_qc_metrics(
+        cd73ft_joyal,
+        qc_vars=["mt", "ribo", "hb"],
+        expr_type="log1p",
+        percent_top=None,
+        log1p=False,
+        inplace=True,
     )
-    # a rejected row is not a failure: the cluster keeps its whole-cluster call, and the
-    # row is the record of the panel having been overruled
-    html_section(
-        "Refining a call with the marker scores",
-        as_table(diagnostics.set_index("cluster")) if len(diagnostics)
-        else "No cluster was called differently by the reference and the panel.",
-        as_table(batch_adata.obs["cell_type"].value_counts()),
+
+    sc.pp.filter_genes(cd73ft_joyal, min_cells=3)
+    sc.pp.highly_variable_genes(cd73ft_joyal, n_top_genes=2000, flavor="seurat")
+    sc.pp.pca(cd73ft_joyal, svd_solver="arpack")
+    sc.pp.neighbors(cd73ft_joyal, n_neighbors=10, n_pcs=40)
+    sc.tl.umap(cd73ft_joyal)
+
+    for resolution in [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5]:
+        sc.tl.leiden(
+            cd73ft_joyal,
+            resolution=resolution,
+            key_added=f"leiden_res_{resolution:.2f}_v0",
+            flavor="igraph",
+            random_state=0,
+        )
+
+    cd73ft_joyal.write_h5ad(cd73ft_joyal_clustered_path)
+
+cd73ft_joyal
+```
+
+```{python}
+#| label: palettes-cd73ft-joyal
+obs_palettes = {
+    "condition": {"NORM": "#2AABB8", "OIR": "#E87D2A"},
+    "timepoint": {"P14": "#2855A0", "P17": "#D63650"},
+    "sort":      {"Cd73ft": "#C9A227", "WR": "#5DB85D"},
+    "lab":       {"Joyal": "#7B4FB5", "Mccarrol": "#A0522D"},
+    "batch":     {"Cd73ft_Joyal": "#C9A227", "WR_Joyal": "#5DB85D", "WR_Mccarrol": "#A0522D"},
+}
+
+for obs_key, palette in obs_palettes.items():
+    categories = cd73ft_joyal.obs[obs_key].cat.categories
+    cd73ft_joyal.uns[f"{obs_key}_colors"] = [palette[category] for category in categories]
+
+# cells are drawn in this order, so whatever comes last sits on top. Shuffled, because the
+# matrix order is the order cells came off the sequencer and it buries whole clusters under
+# their neighbours. To put particular clusters on top instead, sort by the cluster column:
+#   draw_order = cd73ft_joyal.obs[ranked_key].sort_values(ascending=False).index
+draw_order = np.random.default_rng(0).permutation(cd73ft_joyal.n_obs)
+
+resolution_keys = [column for column in cd73ft_joyal.obs.columns if column.endswith("_v0")]
+
+for leiden_key_v0 in resolution_keys:
+    categories = cd73ft_joyal.obs[leiden_key_v0].cat.categories
+    cd73ft_joyal.uns[f"{leiden_key_v0}_colors"] = [
+        mcolors.to_hex(plt.cm.tab20.colors[int(category) % 20]) for category in categories
+    ]
+```
+
+:::
+
+## Leiden sweep
+
+```{python}
+#| label: umap-sweep-cd73ft-joyal
+for start in range(0, len(resolution_keys), 3):
+    group = resolution_keys[start:start + 3]
+
+    # the second row is the colorbar strip the score UMAPs use. It is reserved here too,
+    # and left empty, so both sets of panels have identical geometry and superimpose.
+    fig, axs = plt.subplots(2, 3, height_ratios=[1, 0.22], figsize=(8.6, 3.4),
+                            constrained_layout=True)
+    for ax, leiden_key_v0 in zip(axs[0], group):
+        sc.pl.umap(
+            cd73ft_joyal[draw_order],
+            color=leiden_key_v0,
+            ax=ax,
+            legend_loc="on data",
+            legend_fontsize=9,
+            frameon=True,
+            show=False,
+        )
+        ax.set_aspect("equal", adjustable="datalim")
+
+    for bar_ax in axs[1]:
+        bar_ax.axis("off")
+
+    for empty_ax in axs[0][len(group):]:
+        fig.delaxes(empty_ax)
+
+    plt.show()
+    plt.close(fig)
+```
+
+::: {.content-visible when-format="html"}
+
+## Chosen resolution
+
+```{python}
+#| label: choose-resolution-cd73ft-joyal
+cd73ft_joyal_resolution = 1.0
+
+leiden_key = f"leiden_res_{cd73ft_joyal_resolution:.2f}_v0"
+ranked_key = f"leiden_res_{cd73ft_joyal_resolution:.2f}_v1"
+
+cluster_sizes = cd73ft_joyal.obs[leiden_key].value_counts()
+ranked_labels = [str(rank) for rank in range(1, len(cluster_sizes) + 1)]
+size_rank = dict(zip(cluster_sizes.index, ranked_labels))
+
+cd73ft_joyal.obs[ranked_key] = (
+    cd73ft_joyal.obs[leiden_key]
+    .map(size_rank)
+    .astype("category")
+    .cat.reorder_categories(ranked_labels)
+)
+
+cd73ft_joyal.uns[f"{ranked_key}_colors"] = [
+    mcolors.to_hex(plt.cm.tab20.colors[(int(label) - 1) % 20]) for label in ranked_labels
+]
+
+print(f"{ranked_key}: {cd73ft_joyal.obs[ranked_key].nunique()} clusters")
+cd73ft_joyal.obs[ranked_key].value_counts()
+```
+
+:::
+
+## Clusters on the UMAP
+
+```{python}
+#| label: umap-clusters-cd73ft-joyal
+# scanpy builds the figure here, and takes no figsize argument, so rcParams is where its size
+# has to be set
+plt.rcParams["figure.figsize"] = (5.0, 4.3)
+
+ax = sc.pl.umap(
+    cd73ft_joyal[draw_order],
+    color=ranked_key,
+    legend_loc="on data",
+    legend_fontoutline=2,
+    frameon=True,
+    show=False,
+)
+ax.set_aspect("equal", adjustable="datalim")
+plt.show()
+```
+
+## QC metrics
+
+```{python}
+#| label: qc-violin-cd73ft-joyal
+qc_metrics = {
+    "n_genes_by_log1p": "Genes detected",
+    "total_log1p": "Total expression",
+    "pct_log1p_mt": "% mitochondrial",
+    "pct_log1p_ribo": "% ribosomal",
+    "pct_log1p_hb": "% hemoglobin",
+}
+violin_inner_kws = {"box_width": 2, "whis_width": 1, "marker": "o",
+                    "markersize": 3.0, "markeredgecolor": "white"}
+
+qc_df = sc.get.obs_df(cd73ft_joyal, keys=[ranked_key] + list(qc_metrics))
+batch_color = cd73ft_joyal.uns["batch_colors"][0]
+
+fig, axes = plt.subplots(1, len(qc_metrics), squeeze=False, figsize=(9, 3.0),
+                         constrained_layout=True)
+for ax, (qc_key, qc_label) in zip(axes.flat, qc_metrics.items()):
+    sns.violinplot(data=qc_df, y=qc_key, color=batch_color, cut=0, density_norm="width",
+                   inner="box", inner_kws=violin_inner_kws, linewidth=0.5, ax=ax)
+    ax.set_ylabel(qc_label, fontsize=9)
+    ax.tick_params(axis="y", labelsize=8)
+    ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+    ax.set_axisbelow(True)
+
+plt.show()
+plt.close(fig)
+```
+
+## QC metrics by cluster
+
+```{python}
+#| label: qc-violin-by-cluster-cd73ft-joyal
+# only scanpy reads the _colors entry out of uns, so the palette is handed to seaborn
+# explicitly — otherwise a cluster changes color between the UMAP and these violins
+cluster_palette = dict(zip(cd73ft_joyal.obs[ranked_key].cat.categories, cd73ft_joyal.uns[f"{ranked_key}_colors"]))
+
+fig, axes = plt.subplots(len(qc_metrics), 1, squeeze=False, sharex=True, figsize=(9, 4.3),
+                         constrained_layout=True)
+for ax, (qc_key, qc_label) in zip(axes.flat, qc_metrics.items()):
+    # dodge=False because hue repeats x: left on, seaborn gives each of the 21 clusters its
+    # own sub-slot and every violin is drawn a twentieth of its slot wide, off its tick
+    sns.violinplot(data=qc_df, x=ranked_key, y=qc_key, hue=ranked_key, palette=cluster_palette,
+                   legend=False, dodge=False, cut=0, density_norm="width", inner="box",
+                   inner_kws=violin_inner_kws, linewidth=0.5, saturation=1, ax=ax)
+
+    # seaborn colours the bodies in an order that does not follow the x positions when hue
+    # repeats x, so each is recoloured from the cluster it actually sits under. The order
+    # comes off the categorical rather than the tick labels, which are empty on a shared axis.
+    cluster_order = list(cd73ft_joyal.obs[ranked_key].cat.categories)
+    for body in ax.collections:
+        extents = body.get_paths()[0].get_extents()
+        body.set_facecolor(cluster_palette[cluster_order[round((extents.x0 + extents.x1) / 2)]])
+
+    ax.set_ylabel(qc_label, fontsize=7)
+    ax.set_xlabel("")
+    ax.tick_params(axis="y", labelsize=6)
+    ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+    ax.set_axisbelow(True)
+
+axes[-1][0].set_xlabel("Cluster", fontsize=9)
+axes[-1][0].tick_params(axis="x", labelsize=8)
+plt.show()
+plt.close(fig)
+```
+
+::: {.content-visible when-format="html"}
+
+## Correlation with the reference
+
+```{python}
+#| label: correlate-reference-cd73ft-joyal
+# correlated over the query's variable genes rather than everything shared: the
+# housekeeping bulk is near-identical in every class and only lifts all twelve correlations
+# together, flattening the differences the call is made on
+feature_genes = [
+    gene for gene in cd73ft_joyal.var_names[cd73ft_joyal.var["highly_variable"]]
+    if gene in reference_centroids.var_names
+]
+
+cluster_profiles = pd.DataFrame(
+    [
+        np.asarray(
+            cd73ft_joyal[cd73ft_joyal.obs[ranked_key] == cluster, feature_genes].X.mean(axis=0)
+        ).ravel()
+        for cluster in cd73ft_joyal.obs[ranked_key].cat.categories
+    ],
+    index=cd73ft_joyal.obs[ranked_key].cat.categories,
+    columns=feature_genes,
+)
+reference_profiles = pd.DataFrame(
+    reference_centroids[:, feature_genes].X,
+    index=reference_centroids.obs_names,
+    columns=feature_genes,
+)
+
+# Spearman, so a class is matched on the order it puts the genes in rather than on absolute
+# levels — the two datasets were normalized by different pipelines. Ranking the rows and
+# taking Pearson is the same thing, and does all 21 x 12 pairs in one call.
+ranked_clusters = cluster_profiles.rank(axis=1)
+ranked_reference = reference_profiles.rank(axis=1)
+reference_correlation = pd.DataFrame(
+    np.corrcoef(ranked_clusters, ranked_reference)[:len(ranked_clusters), len(ranked_clusters):],
+    index=cluster_profiles.index,
+    columns=reference_profiles.index,
+)
+
+print(f"{len(feature_genes)} of {int(cd73ft_joyal.var['highly_variable'].sum())} "
+      f"variable genes found in the reference")
+reference_correlation.round(3)
+```
+
+:::
+
+## Correlation with the reference by cluster
+
+```{python}
+#| label: heatmap-reference-cd73ft-joyal
+# the same matrix three ways, matching the marker heatmap. The raw correlations sit in a
+# narrow band, so the two scaled panels are what can actually be read: down a column asks
+# "which cluster is most this class", and across a row asks "which class best fits this
+# cluster" — the annotation question, and the one the calls are taken from.
+#
+# only the row scaling is a call. A column's brightest cell is the best home for that class
+# whether or not the class is present at all: RPE peaks on a rod cluster here, which says
+# where it would land rather than that it was found.
+class_range = reference_correlation.max(axis=0) - reference_correlation.min(axis=0)
+scaled_by_class = reference_correlation.sub(
+    reference_correlation.min(axis=0), axis=1
+).div(class_range, axis=1)
+
+correlation_range = reference_correlation.max(axis=1) - reference_correlation.min(axis=1)
+scaled_correlation = reference_correlation.sub(
+    reference_correlation.min(axis=1), axis=0
+).div(correlation_range, axis=0)
+
+correlation_panels = {
+    "Spearman correlation": reference_correlation,
+    "Scaled per class": scaled_by_class,
+    "Scaled per cluster": scaled_correlation,
+}
+
+# walk the clusters in order and take each one's best class; a class already placed is
+# skipped, and any class no cluster leads with is appended. The matches then read as a
+# diagonal rather than being scattered across the panel.
+class_order = []
+for cluster in scaled_correlation.index:
+    best = scaled_correlation.loc[cluster].idxmax()
+    if best not in class_order:
+        class_order.append(best)
+class_order += [name for name in scaled_correlation.columns if name not in class_order]
+
+fig, axes = plt.subplots(1, len(correlation_panels), squeeze=False, figsize=(9, 4.3),
+                         constrained_layout=True)
+for ax, (title, matrix) in zip(axes.flat, correlation_panels.items()):
+    # xticklabels/yticklabels left at "auto" thins the labels to every other one once a
+    # third panel is on the figure, which leaves half the classes unnamed
+    sns.heatmap(matrix[class_order], cmap="viridis", linewidths=0.5, linecolor="white",
+                xticklabels=True, yticklabels=True,
+                cbar_kws={"shrink": 0.6, "pad": 0.02}, ax=ax)
+    ax.set_title(title, fontsize=9)
+    ax.set_xlabel("Reference class", fontsize=8)
+    ax.set_ylabel("Cluster", fontsize=8)
+    ax.tick_params(axis="x", labelrotation=45, labelsize=7)
+    ax.tick_params(axis="y", labelrotation=0, labelsize=7)
+    for label in ax.get_xticklabels():
+        label.set_ha("right")
+
+plt.show()
+plt.close(fig)
+```
+
+::: {.content-visible when-format="html"}
+
+## Marker scores
+
+```{python}
+#| label: score-markers-cd73ft-joyal
+retina_markers = {
+    "Rods": ["Rho", "Pde6b", "Nrl", "Nr2e3"],
+    "Cones": ["Opn1mw", "Opn1sw", "Arr3", "Thrb"],
+    "RGC": ["Rbpms", "Sncg", "Pou4f1", "Pou4f2"],
+    "Amacrine": ["Tfap2a", "Tfap2b", "Chat", "Vsx1"],
+    "Bipolar": ["Vsx2", "Isl1", "Prkca", "Cabp5"],
+    "Horizontal": ["Onecut1", "Onecut2", "Lhx1", "Prox1"],
+    "Muller_Glia": ["Rlbp1", "Glul", "Sox9", "Slc1a3"],
+    "Microglia": ["Cx3cr1", "P2ry12", "Tmem119", "Aif1"],
+    "Vascular_Endothelial": ["Cdh5", "Pecam1", "Tek"],
+    "Pericytes": ["Pdgfrb", "Acta2", "Des"],
+    "Astrocytes": ["Gfap", "Aldh1l1", "Aqp4"],
+}
+
+score_keys = []
+markers_present = {}
+for cell_type, genes in retina_markers.items():
+    present = [gene.upper() for gene in genes if gene.upper() in cd73ft_joyal.var_names]
+    score_key = f"score_{cell_type}"
+    sc.tl.score_genes(cd73ft_joyal, gene_list=present, score_name=score_key)
+    score_keys.append(score_key)
+    markers_present[cell_type] = present
+    print(f"{cell_type}: {len(present)}/{len(genes)} markers")
+```
+
+:::
+
+## Marker scores by cluster
+
+```{python}
+#| label: score-violin-by-cluster-cd73ft-joyal
+score_df = sc.get.obs_df(cd73ft_joyal, keys=[ranked_key] + score_keys)
+
+for start in range(0, len(score_keys), 6):
+    group = score_keys[start:start + 6]
+    group_types = list(retina_markers)[start:start + 6]
+
+    fig, axes = plt.subplots(len(group), 1, squeeze=False, sharex=True, figsize=(9, 4.3),
+                             constrained_layout=True)
+    for ax, score_key, cell_type in zip(axes.flat, group, group_types):
+        sns.violinplot(data=score_df, x=ranked_key, y=score_key, hue=ranked_key,
+                       palette=cluster_palette, legend=False, dodge=False, cut=0,
+                       density_norm="width", inner="box", inner_kws=violin_inner_kws,
+                       linewidth=0.5, saturation=1, ax=ax)
+
+        cluster_order = list(cd73ft_joyal.obs[ranked_key].cat.categories)
+        for body in ax.collections:
+            extents = body.get_paths()[0].get_extents()
+            body.set_facecolor(cluster_palette[cluster_order[round((extents.x0 + extents.x1) / 2)]])
+
+        ax.set_ylabel(f"{cell_type.replace('_', ' ')} score", fontsize=7)
+        ax.set_xlabel("")
+        ax.tick_params(axis="y", labelsize=6)
+        ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+        ax.set_axisbelow(True)
+
+    axes[-1][0].set_xlabel("Cluster", fontsize=9)
+    axes[-1][0].tick_params(axis="x", labelsize=8)
+    plt.show()
+    plt.close(fig)
+```
+
+## Marker scores on the UMAP
+
+```{python}
+#| label: umap-scores-cd73ft-joyal
+for start in range(0, len(score_keys), 3):
+    group = score_keys[start:start + 3]
+
+    fig, axs = plt.subplots(2, 3, height_ratios=[1, 0.22], figsize=(8.6, 3.4),
+                            constrained_layout=True)
+    for ax, bar_ax, score_key in zip(axs[0], axs[1], group):
+        sc.pl.umap(
+            cd73ft_joyal,
+            color=score_key,
+            ax=ax,
+            frameon=True,
+            colorbar_loc=None,
+            show=False,
+        )
+        ax.set_aspect("equal", adjustable="datalim")
+
+        # the strip reserves the space; the colorbar drawn inside it is excluded from the
+        # layout so its tick labels cannot push the panel around
+        bar_ax.axis("off")
+        colorbar_ax = bar_ax.inset_axes([0.325, 0.82, 0.35, 0.18])
+        colorbar_ax.set_in_layout(False)
+        colorbar = fig.colorbar(ax.collections[0], cax=colorbar_ax, orientation="horizontal")
+
+        # placed explicitly at the ends and middle: the automatic locator picks its own round
+        # numbers per score, so the tick count and positions differ from panel to panel
+        score_low, score_high = ax.collections[0].get_clim()
+        colorbar_ticks = np.linspace(score_low, score_high, 3)
+        colorbar.set_ticks(colorbar_ticks, labels=[f"{tick:.2f}" for tick in colorbar_ticks])
+        colorbar.ax.tick_params(labelsize=7)
+
+    for empty_ax in axs[0][len(group):]:
+        fig.delaxes(empty_ax)
+    for empty_bar_ax in axs[1][len(group):]:
+        empty_bar_ax.axis("off")
+
+    plt.show()
+    plt.close(fig)
+```
+
+## Marker genes by cluster
+
+```{python}
+#| label: dotplot-markers-cd73ft-joyal
+# figsize is deliberately not passed: dotplot derives its own from the gene and cluster counts,
+# and forcing it to slide dimensions packs 41 genes across 21 clusters until the dots overlap
+sc.pl.dotplot(cd73ft_joyal, markers_present, groupby=ranked_key, standard_scale="var")
+```
+
+## Marker score heatmap
+
+```{python}
+#| label: heatmap-scores-cd73ft-joyal
+mean_scores = score_df.groupby(ranked_key, observed=True)[score_keys].mean()
+mean_scores.columns = [cell_type.replace("_", " ") for cell_type in retina_markers]
+
+# the same matrix three ways, because they answer different questions: the raw means show
+# magnitude, scaling down a column asks "which cluster is most this cell type", and scaling
+# across a row asks "which cell type best fits this cluster" — the annotation question
+scaled_by_type = (mean_scores - mean_scores.min()) / (mean_scores.max() - mean_scores.min())
+row_range = mean_scores.max(axis=1) - mean_scores.min(axis=1)
+scaled_by_cluster = mean_scores.sub(mean_scores.min(axis=1), axis=0).div(row_range, axis=0)
+
+score_normalizations = {
+    "Mean score": mean_scores,
+    "Scaled per cell type": scaled_by_type,
+    "Scaled per cluster": scaled_by_cluster,
+}
+
+# walk the clusters in order and take each one's best cell type; a type already placed is
+# skipped, and any type no cluster leads with is appended. The matches then read as a
+# diagonal rather than being scattered across the panel.
+column_order = []
+for cluster in scaled_by_cluster.index:
+    best = scaled_by_cluster.loc[cluster].idxmax()
+    if best not in column_order:
+        column_order.append(best)
+column_order += [c for c in scaled_by_cluster.columns if c not in column_order]
+
+fig, axes = plt.subplots(1, len(score_normalizations), squeeze=False, figsize=(9, 4.3),
+                         constrained_layout=True)
+for ax, (title, matrix) in zip(axes.flat, score_normalizations.items()):
+    # as on the reference heatmap: left at "auto" the labels thin to every other one across
+    # three panels, which leaves half the cell types and half the clusters unnamed
+    sns.heatmap(matrix[column_order], cmap="viridis", linewidths=0.5, linecolor="white",
+                xticklabels=True, yticklabels=True,
+                cbar_kws={"shrink": 0.6, "pad": 0.02}, ax=ax)
+    ax.set_title(title, fontsize=9)
+    ax.set_xlabel("Cell type", fontsize=8)
+    ax.set_ylabel("Cluster", fontsize=8)
+    ax.tick_params(axis="x", labelrotation=45, labelsize=7)
+    ax.tick_params(axis="y", labelrotation=0, labelsize=7)
+    for label in ax.get_xticklabels():
+        label.set_ha("right")
+
+plt.show()
+plt.close(fig)
+```
+
+::: {.content-visible when-format="html"}
+
+## Preliminary cell types
+
+```{python}
+#| label: annotate-clusters-cd73ft-joyal
+# the call is the best-correlating reference class. The marker scores stay in the document
+# as an independent read on the same question — where the two disagree, the disagreement is
+# the thing to look at before writing an override.
+cluster_calls = reference_correlation.idxmax(axis=1)
+marker_calls = mean_scores.idxmax(axis=1)
+
+# the calls a human made rather than the reference; everything not listed keeps its argmax.
+# Empty because this batch has not been read yet, so every call below is still the argmax.
+# The WR_Joyal sheet above does not transfer: its cluster numbers are that batch's own
+# Leiden run ranked by size and name nothing in common with these. Fill this in from the
+# table below once the heatmap and the dotplot have been looked at, e.g. {"7": "Pericyte"}.
+cluster_call_overrides = {}
+cluster_calls.update(pd.Series(cluster_call_overrides))
+
+cd73ft_joyal.obs["cell_type"] = cd73ft_joyal.obs[ranked_key].map(cluster_calls).astype("category")
+
+# keyed on every class in the reference rather than only the ones called, so a cell type
+# keeps its colour whatever a given resolution happens to find
+cell_type_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20))
+cd73ft_joyal.uns["cell_type_colors"] = [
+    cell_type_palette[cell_type] for cell_type in cd73ft_joyal.obs["cell_type"].cat.categories
+]
+
+# margin is the gap to the runner-up class: a cluster called on a hair's difference is one
+# to read the heatmap for, however high its correlation
+sorted_correlation = np.sort(reference_correlation.to_numpy(), axis=1)
+
+pd.DataFrame({
+    "cell_type": cluster_calls,
+    "cells": cd73ft_joyal.obs[ranked_key].value_counts(),
+    "correlation": reference_correlation.max(axis=1).round(3),
+    "margin": (sorted_correlation[:, -1] - sorted_correlation[:, -2]).round(3),
+    "marker call": marker_calls,
+})
+```
+
+## Refining a call with the marker scores
+
+```{python}
+#| label: refine-cell-types-cd73ft-joyal
+# the reference calls a whole cluster one class, so a population that never forms its own
+# cluster cannot be named — the vascular cells here are one cluster of 106 holding both
+# endothelium and pericytes. Where the marker panel says a cluster holds two classes, the
+# cells are split: each goes to whichever of the two scores is higher, provided that score
+# clears zero. score_genes centres a score on a control gene set, so above zero means
+# enriched above background; a cell clearing neither keeps the cluster's call rather than
+# being sent one way on noise.
+#
+# the assignment itself has no threshold to choose — the two scores are compared against
+# each other — but which clusters get split is gated below, because a disagreement between
+# the reference and the panel is not on its own evidence that a cluster holds two things.
+
+# the reference names classes and the marker panel names them differently; the two
+# vocabularies have to be joined by hand, and everything else here is derived from the join
+marker_to_class = {
+    "Rods": "Rod",                          "Cones": "Cone",
+    "RGC": "RGC",                           "Amacrine": "AC",
+    "Bipolar": "BC",                        "Horizontal": "HC",
+    "Muller_Glia": "MG",                    "Microglia": "Microglia",
+    "Vascular_Endothelial": "Endothelial",
+    "Pericytes": "Pericyte",                "Astrocytes": "Astrocyte",
+}
+
+# score_genes wrote score_<panel name>; mean_scores spaced the same names out for its axis
+class_scores = {cls: f"score_{panel}" for panel, cls in marker_to_class.items()}
+rival_calls = marker_calls.map(
+    {panel.replace("_", " "): cls for panel, cls in marker_to_class.items()}
+)
+
+# a cluster is a candidate exactly when the reference and the panel name it differently: one
+# of them is wrong, or — the case this chunk is for — the cluster holds both. The pair falls
+# out of the disagreement, the call above being the parent and the panel's answer the child.
+cluster_refinements = {
+    cluster: (cluster_calls[cluster], rival_calls[cluster])
+    for cluster in cluster_calls.index
+    if cluster_calls[cluster] != rival_calls[cluster]
+}
+
+# a disagreement says where to look, not what to do: the panels are not on a common scale,
+# so a panel of bright genes annexes cells from a dim one wherever the two are compared. The
+# split is therefore only applied where the cluster actually looks like two populations.
+#
+# the test is the L in the scatter below, written as a number. In a mixed cluster the two
+# scores trade off — a cell high on one is low on the other — so the rank correlation
+# between them across the cluster runs negative. In one population with a depth gradient
+# both scores rise and fall together and the correlation runs positive; cutting that at the
+# diagonal halves a gradient at an arbitrary place rather than finding a boundary. Requiring
+# both arms to be a real fraction of the cluster then throws out splits that shave off a
+# handful of cells.
+#
+# the scores have to actually trade off, not merely fail to correlate: a cluster sitting at
+# zero has the two scores independent of each other, which is a cloud rather than an L and
+# says nothing about there being two populations in it. The vascular cluster runs -0.75 and
+# the next candidate ten times weaker, so the cut is set between them rather than at zero.
+max_tradeoff = -0.25
+min_arm_cells = 10
+min_arm_fraction = 0.05
+
+split_diagnostics = []
+for cluster, (parent_class, child_class) in cluster_refinements.items():
+    in_cluster = (cd73ft_joyal.obs[ranked_key] == cluster).to_numpy()
+    parent_score = cd73ft_joyal.obs[class_scores[parent_class]].to_numpy()
+    child_score = cd73ft_joyal.obs[class_scores[child_class]].to_numpy()
+
+    reassigned = in_cluster & (child_score > parent_score) & (child_score > 0)
+    n_cluster = int(in_cluster.sum())
+    n_child = int(reassigned.sum())
+
+    tradeoff = np.corrcoef(
+        pd.Series(parent_score[in_cluster]).rank(),
+        pd.Series(child_score[in_cluster]).rank(),
+    )[0, 1]
+    smallest_arm = min(n_child, n_cluster - n_child)
+    applied = bool(
+        tradeoff < max_tradeoff
+        and smallest_arm >= max(min_arm_cells, min_arm_fraction * n_cluster)
     )
-    refine_scatter_slide(batch_adata, refinements, diagnostics, ranked_key, cell_type_palette)
 
-    umap_cell_types_slide(batch_adata)
+    if applied:
+        if child_class not in cd73ft_joyal.obs["cell_type"].cat.categories:
+            cd73ft_joyal.obs["cell_type"] = (
+                cd73ft_joyal.obs["cell_type"].cat.add_categories([child_class])
+            )
+        cd73ft_joyal.obs.loc[reassigned, "cell_type"] = child_class
 
-    txn1_df = sc.get.obs_df(batch_adata, keys=["TXN1", "cell_type", "condition", "timepoint"])
-    umap_txn1_slide(batch_adata)
-    txn1_violin_celltype_slide(batch_adata, txn1_df, cell_type_palette)
-    txn1_violin_condition_slide(batch_adata, txn1_df)
-    txn1_violin_timepoint_slide(batch_adata, txn1_df)
-    umap_txn1_stratified_slide(batch_adata)
-    txn1_violin_stratified_slide(batch_adata, txn1_df)
-    txn1_violin_stratified_by_condition_slide(batch_adata, txn1_df)
+    split_diagnostics.append({
+        "cluster": cluster,
+        "parent": parent_class,
+        "child": child_class,
+        "cells": n_cluster,
+        "would move": n_child,
+        "tradeoff": round(tradeoff, 3),
+        "applied": applied,
+    })
 
-    del batch_adata
+# a rejected row is not a failure: the cluster keeps its whole-cluster call, and the row is
+# the record of the panel having been overruled
+print(pd.DataFrame(split_diagnostics).to_string(index=False))
+split_applied = {row["cluster"]: row["applied"] for row in split_diagnostics}
+
+# a class added above lands at the end of the categories, which would put it last on every
+# axis downstream rather than in with the rest
+cd73ft_joyal.obs["cell_type"] = cd73ft_joyal.obs["cell_type"].cat.remove_unused_categories()
+cd73ft_joyal.obs["cell_type"] = cd73ft_joyal.obs["cell_type"].cat.reorder_categories(
+    sorted(cd73ft_joyal.obs["cell_type"].cat.categories)
+)
+cd73ft_joyal.uns["cell_type_colors"] = [
+    cell_type_palette[cell_type] for cell_type in cd73ft_joyal.obs["cell_type"].cat.categories
+]
+
+cd73ft_joyal.obs["cell_type"].value_counts()
+```
+
+:::
+
+## Cells reassigned by marker score
+
+```{python}
+#| label: refine-scatter-cd73ft-joyal
+# the two scores against each other, one panel per refinement. A cluster worth splitting
+# looks like an L — each arm high on one score and flat on the other, with the middle
+# empty. A diffuse cloud across the diagonal means the two classes are not separable this
+# way, and the cluster should be left alone.
+fig, axes = plt.subplots(1, len(cluster_refinements), squeeze=False,
+                         figsize=(4.3 * len(cluster_refinements), 3.6),
+                         constrained_layout=True)
+for ax, (cluster, (parent_class, child_class)) in zip(axes.flat, cluster_refinements.items()):
+    in_cluster = (cd73ft_joyal.obs[ranked_key] == cluster).to_numpy()
+    cluster_cells = sc.get.obs_df(
+        cd73ft_joyal,
+        keys=[class_scores[parent_class], class_scores[child_class], "cell_type"],
+    )[in_cluster]
+
+    for called_class in [parent_class, child_class]:
+        is_called = (cluster_cells["cell_type"] == called_class).to_numpy()
+        ax.scatter(
+            cluster_cells[class_scores[parent_class]][is_called],
+            cluster_cells[class_scores[child_class]][is_called],
+            s=14, c=cell_type_palette[called_class], linewidths=0,
+            label=f"{called_class} ({is_called.sum()})",
+        )
+
+    # the decision boundary is the diagonal, which is the whole point of comparing the two
+    # scores rather than cutting one of them at a number
+    span = [
+        cluster_cells[[class_scores[parent_class], class_scores[child_class]]].min().min(),
+        cluster_cells[[class_scores[parent_class], class_scores[child_class]]].max().max(),
+    ]
+    ax.plot(span, span, color="#b0b0b0", linewidth=1.0, linestyle="--", zorder=0)
+
+    verdict = "split" if split_applied[cluster] else "left whole"
+    ax.set_title(f"Cluster {cluster} — {verdict}", fontsize=9)
+    ax.set_xlabel(f"{parent_class} score", fontsize=8)
+    ax.set_ylabel(f"{child_class} score", fontsize=8)
+    ax.tick_params(labelsize=7)
+    ax.legend(fontsize=7, frameon=False, loc="upper right")
+
+plt.show()
+plt.close(fig)
+```
+
+## Preliminary cell types on the UMAP
+
+```{python}
+#| label: umap-cell-types-cd73ft-joyal
+plt.rcParams["figure.figsize"] = (6.5, 4.3)
+
+ax = sc.pl.umap(
+    cd73ft_joyal[draw_order],
+    color="cell_type",
+    frameon=True,
+    show=False,
+)
+ax.set_aspect("equal", adjustable="datalim")
+plt.show()
+```
+
+## Txn1 on the UMAP
+
+```{python}
+#| label: umap-txn1-cd73ft-joyal
+fig, axs = plt.subplots(2, 1, height_ratios=[1, 0.22], figsize=(4.3, 3.9),
+                        constrained_layout=True)
+
+sc.pl.umap(cd73ft_joyal, color="TXN1", ax=axs[0], frameon=True, colorbar_loc=None, show=False)
+axs[0].set_aspect("equal", adjustable="datalim")
+
+axs[1].axis("off")
+colorbar_ax = axs[1].inset_axes([0.325, 0.82, 0.35, 0.18])
+colorbar_ax.set_in_layout(False)
+colorbar = fig.colorbar(axs[0].collections[0], cax=colorbar_ax, orientation="horizontal")
+
+txn1_low, txn1_high = axs[0].collections[0].get_clim()
+colorbar_ticks = np.linspace(txn1_low, txn1_high, 3)
+colorbar.set_ticks(colorbar_ticks, labels=[f"{tick:.2f}" for tick in colorbar_ticks])
+colorbar.ax.tick_params(labelsize=7)
+
+plt.show()
+plt.close(fig)
+```
+
+## Txn1 by cell type
+
+```{python}
+#| label: txn1-violin-celltype-cd73ft-joyal
+txn1_df = sc.get.obs_df(cd73ft_joyal, keys=["TXN1", "cell_type", "condition", "timepoint"])
+
+fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
+sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", hue="cell_type",
+               palette=cell_type_palette, legend=True, dodge=False, cut=0,
+               density_norm="width", inner="box", inner_kws=violin_inner_kws,
+               linewidth=0.5, saturation=1, ax=ax)
+
+# with hue repeating x and dodge off, seaborn hands the bodies their colours in an order
+# that does not follow the x positions — the legend ends up right and the violins wrong.
+# Recolour each body from the cell type it actually sits under.
+cell_type_order = list(cd73ft_joyal.obs["cell_type"].cat.categories)
+for body in ax.collections:
+    extents = body.get_paths()[0].get_extents()
+    body.set_facecolor(cell_type_palette[cell_type_order[round((extents.x0 + extents.x1) / 2)]])
+
+ax.set_xlabel("")
+ax.set_ylabel("Txn1 (log1p)", fontsize=9)
+ax.tick_params(axis="x", labelrotation=45, labelsize=8)
+ax.tick_params(axis="y", labelsize=8)
+ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+ax.set_axisbelow(True)
+for label in ax.get_xticklabels():
+    label.set_ha("right")
+ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
+
+plt.show()
+plt.close(fig)
+```
+
+## Txn1 by cell type and condition
+
+```{python}
+#| label: txn1-violin-condition-cd73ft-joyal
+condition_palette = dict(zip(cd73ft_joyal.obs["condition"].cat.categories,
+                             cd73ft_joyal.uns["condition_colors"]))
+
+fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
+sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", hue="condition",
+               palette=condition_palette, cut=0, density_norm="width", inner="box",
+               inner_kws=violin_inner_kws, linewidth=0.5, ax=ax)
+ax.set_xlabel("")
+ax.set_ylabel("Txn1 (log1p)", fontsize=9)
+ax.tick_params(axis="x", labelrotation=45, labelsize=8)
+ax.tick_params(axis="y", labelsize=8)
+ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+ax.set_axisbelow(True)
+for label in ax.get_xticklabels():
+    label.set_ha("right")
+ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
+
+plt.show()
+plt.close(fig)
+```
+
+## Txn1 by cell type and timepoint
+
+```{python}
+#| label: txn1-violin-timepoint-cd73ft-joyal
+timepoint_palette = dict(zip(cd73ft_joyal.obs["timepoint"].cat.categories,
+                             cd73ft_joyal.uns["timepoint_colors"]))
+
+fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
+sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", hue="timepoint",
+               palette=timepoint_palette, cut=0, density_norm="width", inner="box",
+               inner_kws=violin_inner_kws, linewidth=0.5, ax=ax)
+ax.set_xlabel("")
+ax.set_ylabel("Txn1 (log1p)", fontsize=9)
+ax.tick_params(axis="x", labelrotation=45, labelsize=8)
+ax.tick_params(axis="y", labelsize=8)
+ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+ax.set_axisbelow(True)
+for label in ax.get_xticklabels():
+    label.set_ha("right")
+ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
+
+plt.show()
+plt.close(fig)
+```
+
+## Txn1 across the design
+
+```{python}
+#| label: umap-txn1-stratified-cd73ft-joyal
+# laid out like the violin slides below: timepoint down the rows, condition across the
+# columns, so the same comparison sits in the same direction in every Txn1 figure
+condition_order = list(cd73ft_joyal.obs["condition"].cat.categories)
+timepoints = list(cd73ft_joyal.obs["timepoint"].cat.categories)
+
+umap_coords = cd73ft_joyal.obsm["X_umap"]
+txn1 = sc.get.obs_df(cd73ft_joyal, keys=["TXN1"])["TXN1"].to_numpy()
+txn1_low, txn1_high = txn1.min(), txn1.max()
+
+# drawn with scatter rather than sc.pl.umap: it puts the whole embedding underneath in grey,
+# and it fixes the point size, which scanpy scales by cell count — the sparse panels would
+# otherwise carry much larger points than the dense ones.
+fig, axes = plt.subplots(len(timepoints), len(condition_order), squeeze=False,
+                         figsize=(5.6, 4.4), constrained_layout=True)
+fig.get_layout_engine().set(w_pad=0.01, h_pad=0.01, wspace=0.01, hspace=0.02)
+for row, timepoint in enumerate(timepoints):
+    for column, condition in enumerate(condition_order):
+        ax = axes[row][column]
+        in_stratum = (
+            (cd73ft_joyal.obs["timepoint"] == timepoint) & (cd73ft_joyal.obs["condition"] == condition)
+        ).to_numpy()
+
+        # every cell in grey, so each panel is read against the same outline rather than
+        # appearing to be a differently-shaped dataset
+        ax.scatter(umap_coords[:, 0], umap_coords[:, 1], s=1, c="#bfbfbf", linewidths=0)
+        points = ax.scatter(umap_coords[in_stratum, 0], umap_coords[in_stratum, 1], s=1,
+                            c=txn1[in_stratum], cmap="viridis",
+                            vmin=txn1_low, vmax=txn1_high, linewidths=0)
+
+        ax.set_aspect("equal", adjustable="datalim")
+        ax.set_ylabel(f"Txn1 — {timepoint}" if column == 0 else "", fontsize=8)
+        ax.set_title(condition if row == 0 else "", fontsize=9)
+        ax.text(0.02, 0.98, f"n={in_stratum.sum():,}", transform=ax.transAxes,
+                va="top", ha="left", fontsize=7)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+colorbar = fig.colorbar(points, ax=axes, location="right", shrink=0.35, pad=0.02, aspect=25)
+colorbar_ticks = np.linspace(txn1_low, txn1_high, 3)
+colorbar.set_ticks(colorbar_ticks, labels=[f"{tick:.2f}" for tick in colorbar_ticks])
+colorbar.ax.tick_params(labelsize=7)
+
+plt.show()
+plt.close(fig)
+```
+
+## Txn1 by cell type across the design
+
+```{python}
+#| label: txn1-violin-stratified-cd73ft-joyal
+cell_type_order = list(cd73ft_joyal.obs["cell_type"].cat.categories)
+condition_order = list(cd73ft_joyal.obs["condition"].cat.categories)
+timepoints = list(cd73ft_joyal.obs["timepoint"].cat.categories)
+
+# grouped violins rather than four panels: NORM and OIR sit side by side within each cell
+# type's slot, so the comparison is a glance rather than a jump between figures. Timepoint is
+# the facet, which leaves the interaction readable down a column.
+fig, axes = plt.subplots(len(timepoints), 1, squeeze=False, sharex=True, sharey=True,
+                         figsize=(9, 5.0), constrained_layout=True)
+for row, (ax, timepoint) in enumerate(zip(axes.flat, timepoints)):
+    at_timepoint = txn1_df[txn1_df["timepoint"] == timepoint]
+    sns.violinplot(data=at_timepoint, x="cell_type", y="TXN1", order=cell_type_order,
+                   hue="condition", hue_order=condition_order, palette=condition_palette,
+                   gap=0.1, cut=0, density_norm="width", inner="box",
+                   inner_kws=violin_inner_kws, linewidth=0.5, saturation=1,
+                   legend=(row == 0), ax=ax)
+    ax.set_ylabel(f"Txn1 — {timepoint}", fontsize=8)
+    ax.set_xlabel("")
+    ax.tick_params(axis="y", labelsize=6)
+    ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+    ax.set_axisbelow(True)
+    sns.despine(ax=ax)
+
+axes[0][0].legend(title="", fontsize=7, frameon=False,
+                  loc="center left", bbox_to_anchor=(1.0, 0.5))
+axes[-1][0].tick_params(axis="x", labelrotation=45, labelsize=8)
+for label in axes[-1][0].get_xticklabels():
+    label.set_ha("right")
+
+plt.show()
+plt.close(fig)
+```
+
+## Txn1 by cell type across the design, grouped by timepoint
+
+```{python}
+#| label: txn1-violin-stratified-by-condition-cd73ft-joyal
+timepoint_palette = dict(zip(cd73ft_joyal.obs["timepoint"].cat.categories,
+                             cd73ft_joyal.uns["timepoint_colors"]))
+
+# the same data with the roles swapped: P14 and P17 side by side within each cell type, and
+# condition as the facet. Reading down a column here compares the two timepoints within a
+# condition, where the plot above compares the two conditions within a timepoint.
+fig, axes = plt.subplots(len(condition_order), 1, squeeze=False, sharex=True, sharey=True,
+                         figsize=(9, 5.0), constrained_layout=True)
+for row, (ax, condition) in enumerate(zip(axes.flat, condition_order)):
+    in_condition = txn1_df[txn1_df["condition"] == condition]
+    sns.violinplot(data=in_condition, x="cell_type", y="TXN1", order=cell_type_order,
+                   hue="timepoint", hue_order=timepoints, palette=timepoint_palette,
+                   gap=0.1, cut=0, density_norm="width", inner="box",
+                   inner_kws=violin_inner_kws, linewidth=0.5, saturation=1,
+                   legend=(row == 0), ax=ax)
+    ax.set_ylabel(f"Txn1 — {condition}", fontsize=8)
+    ax.set_xlabel("")
+    ax.tick_params(axis="y", labelsize=6)
+    ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+    ax.set_axisbelow(True)
+    sns.despine(ax=ax)
+
+axes[0][0].legend(title="", fontsize=7, frameon=False,
+                  loc="center left", bbox_to_anchor=(1.0, 0.5))
+axes[-1][0].tick_params(axis="x", labelrotation=45, labelsize=8)
+for label in axes[-1][0].get_xticklabels():
+    label.set_ha("right")
+
+plt.show()
+plt.close(fig)
 ```
