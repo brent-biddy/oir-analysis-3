@@ -48,11 +48,9 @@ rm data/processed/GSE150703_adata_WR_Joyal_clustered.h5ad    # to change the swe
 
 Everything after the clustering is unguarded and takes effect on the next render.
 
-**A gfm render rewrites all 50 figures**, changed or not. After a no-op re-render:
-
-```bash
-git checkout -- oir_analysis_files/
-```
+**Re-rendering gfm is safe to do freely.** Every seed is pinned and matplotlib writes no
+timestamps, so a render that changes nothing produces byte-identical figures and git reports
+no diff. Only figures that actually changed show up.
 
 ## Layout
 
