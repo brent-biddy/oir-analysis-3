@@ -22,30 +22,33 @@ format:
 jupyter: oir-analysis-3
 ---
 
+## Setup
+
+First, let's load the libraries we need. We'll also set a few default plotting parameters here,
+so the figures stay consistent throughout the document.
+
 ```{python}
 #| label: setup
-from pathlib import Path                    # the download and object paths
-from urllib.request import urlretrieve      # fetches the DGE matrix and the reference
+from pathlib import Path                    # used to construct file paths
+from urllib.request import urlretrieve      # used to download query and reference data
 
-import anndata as ad                        # AnnData, for the object and the centroids
-import h5py                                 # reads the reference without pulling in its .raw
-import matplotlib.colors as mcolors         # to_hex, for the cluster palettes
-import matplotlib.pyplot as plt             # every figure
-import numpy as np                          # arrays, the rank correlations, the draw order
-import pandas as pd                         # the profile matrices and the printed tables
-import scanpy as sc                         # the analysis
-import seaborn as sns                       # the violins, heatmaps and scatters
-from anndata.io import read_elem            # one h5ad element at a time, for the reference
-from scipy.sparse import csr_matrix         # the DGE matrix, densely read and stored sparse
+import anndata as ad                        # used to load data
+import matplotlib.colors as mcolors         # used to convert palette colours to hex
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import scanpy as sc
+import seaborn as sns
+from scipy.sparse import csr_matrix         # used to store the counts sparsely
 
 plt.rcParams.update({
     "figure.dpi": 200,        # resolution of the figures as drawn
-    "savefig.dpi": 200,       # and as written out
-    "font.size": 12,          # the on-data cluster numbers; dotplot text derives from it
-    "axes.labelsize": 12,     # scanpy's UMAP axis labels
-    "axes.titlesize": 13,     # scanpy's panel titles
-    "ytick.labelsize": 10.5,  # the heatmap colorbar ticks
-    "legend.fontsize": 11,    # scanpy's UMAP legends
+    "savefig.dpi": 200,       # resolution of the figures as written out
+    "font.size": 12,          # font size of the on-data cluster numbers, and of dotplot text
+    "axes.labelsize": 12,     # font size of scanpy's UMAP axis labels
+    "axes.titlesize": 13,     # font size of scanpy's panel titles
+    "ytick.labelsize": 10.5,  # font size of the heatmap colorbar ticks
+    "legend.fontsize": 11,    # font size of scanpy's UMAP legends
 })
 ```
 
@@ -126,23 +129,23 @@ centroid_path = Path("data/processed/MRCA_majorclass_centroids.h5ad")
 if centroid_path.exists():
     reference_centroids = sc.read_h5ad(centroid_path)
 else:
-    # read_h5ad would also pull in .raw, which is a second copy of an already 9.8 GB matrix
-    # and takes the load past this machine's memory. Only the three elements the aggregation
-    # needs are read, and the indices are narrowed to int32 — they index 31,671 columns.
-    with h5py.File(reference_path) as handle:
-        reference_counts = read_elem(handle["X"])
-        reference_obs = read_elem(handle["obs"])
-        reference_var = read_elem(handle["var"])
+    # the atlas ships a .raw holding a second copy of X — same shape, same 812.8M nonzeros,
+    # 9.8 GB apiece — so a plain read_h5ad loads both and takes this machine past its memory.
+    # Opened backed, nothing is read yet; dropping .raw drops it before it is read; and
+    # to_memory then brings in X alone.
+    reference = sc.read_h5ad(reference_path, backed="r")
+    reference.raw = None
+    reference = reference.to_memory()
 
-    reference_counts.indices = reference_counts.indices.astype(np.int32)
-    reference_counts.indptr = reference_counts.indptr.astype(np.int32)
+    # down to the two columns the aggregation reads, so the centroids carry the atlas's
+    # thirty-three obs and seven var columns no further than this line
+    reference.obs = reference.obs[["majorclass"]]
+    reference.var = reference.var[["feature_name"]]
 
-    reference = ad.AnnData(
-        X=reference_counts,
-        obs=reference_obs[["majorclass"]],
-        var=reference_var[["feature_name"]],
-    )
-    del reference_counts, reference_obs, reference_var
+    # the indices are narrowed to int32 — they index 31,671 columns, and at this many
+    # nonzeros int64 asks for 3.3 GB more than the job has any use for
+    reference.X.indices = reference.X.indices.astype(np.int32)
+    reference.X.indptr = reference.X.indptr.astype(np.int32)
 
     reference_centroids = sc.get.aggregate(reference, by="majorclass", func="mean")
     reference_centroids.X = reference_centroids.layers.pop("mean")
