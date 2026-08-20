@@ -184,8 +184,9 @@ else:
         var=backed.raw.var[["feature_name"]],
     )
 
-    reference.X.indices = reference.X.indices.astype(np.int32)  # int32 indexes 31,671 columns
-    reference.X.indptr = reference.X.indptr.astype(np.int32)    # and saves 3.3 GB here
+    reference.var["ensembl_id"] = reference.var_names   # kept before the index becomes symbols
+    reference.var_names = reference.var.pop("feature_name").str.upper()  # the query uses symbols
+    reference.var_names_make_unique(join="_v")  # nine symbols answer to more than one Ensembl id
 
     counts_sum = sc.get.aggregate(reference, by="majorclass", func="sum")
     sc.pp.normalize_total(reference, target_sum=1e4)   # counts -> CP10K, in place
@@ -199,11 +200,6 @@ else:
         layers={"counts": counts_sum.layers["sum"]},
     )
     reference_centroids.obs["n_cells"] = cp10k_sum.obs["n_obs_aggregated"].to_numpy()
-
-    # nine symbols answer to more than one Ensembl id, so drop them rather than guess
-    symbols = reference_centroids.var["feature_name"].astype(str).str.upper()
-    reference_centroids = reference_centroids[:, ~symbols.duplicated(keep=False).to_numpy()].copy()
-    reference_centroids.var_names = symbols[~symbols.duplicated(keep=False)].to_numpy()
 
     reference_centroids.write_h5ad(centroid_path)
 
@@ -235,6 +231,10 @@ resolutions and choose from it in the next step.
 
 ```{python}
 #| label: cluster-wr-joyal
+wr_joyal_resolution = 0.40   # chosen in oir-analysis and oir-analysis-2
+leiden_key = f"leiden_res_{wr_joyal_resolution:.2f}_v0"
+ranked_key = f"leiden_res_{wr_joyal_resolution:.2f}_v1"
+
 wr_joyal_clustered_path = Path("data/processed/GSE150703_adata_WR_Joyal_clustered.h5ad")
 
 if wr_joyal_clustered_path.exists():           # clustered once, then read back on later renders
@@ -263,31 +263,33 @@ else:
     sc.pp.neighbors(wr_joyal, n_neighbors=10, n_pcs=40)
     sc.tl.umap(wr_joyal)
 
-    for resolution in [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5]:
-        sc.tl.leiden(
-            wr_joyal,
-            resolution=resolution,
-            key_added=f"leiden_res_{resolution:.2f}_v0",   # one column per resolution
-            flavor="igraph",
-            random_state=0,                    # the one argument here that decides the output
-        )
+    sc.tl.leiden(
+        wr_joyal,
+        resolution=wr_joyal_resolution,
+        key_added=leiden_key,
+        flavor="igraph",
+        random_state=0,                        # the one argument here that decides the output
+    )
+
+    # renumbered by size, so cluster 1 is always the largest
+    cluster_sizes = wr_joyal.obs[leiden_key].value_counts()
+    ranked_labels = [str(rank) for rank in range(1, len(cluster_sizes) + 1)]
+    wr_joyal.obs[ranked_key] = (
+        wr_joyal.obs[leiden_key]
+        .map(dict(zip(cluster_sizes.index, ranked_labels)))
+        .astype("category")
+        .cat.reorder_categories(ranked_labels)
+    )
+
+    for obs_key, palette in obs_palettes.items():
+        categories = wr_joyal.obs[obs_key].cat.categories
+        wr_joyal.uns[f"{obs_key}_colors"] = [palette[category] for category in categories]
+
+    wr_joyal.uns[f"{ranked_key}_colors"] = [               # tab20, cycled once past 20 clusters
+        mcolors.to_hex(plt.cm.tab20.colors[(int(label) - 1) % 20]) for label in ranked_labels
+    ]
 
     wr_joyal.write_h5ad(wr_joyal_clustered_path)
-
-# below the guard, so these take effect on a re-render without re-clustering
-for obs_key, palette in obs_palettes.items():
-    categories = wr_joyal.obs[obs_key].cat.categories
-    wr_joyal.uns[f"{obs_key}_colors"] = [palette[category] for category in categories]
-
-draw_order = np.random.default_rng(0).permutation(wr_joyal.n_obs)  # last drawn sits on top
-
-resolution_keys = [c for c in wr_joyal.obs.columns if c.endswith("_v0")]  # every resolution swept
-
-for leiden_key_v0 in resolution_keys:                # tab20, cycled once past 20 clusters
-    categories = wr_joyal.obs[leiden_key_v0].cat.categories
-    wr_joyal.uns[f"{leiden_key_v0}_colors"] = [
-        mcolors.to_hex(plt.cm.tab20.colors[int(category) % 20]) for category in categories
-    ]
 
 wr_joyal
 ```
@@ -295,67 +297,6 @@ wr_joyal
 The clustered object is saved to `data/processed/`, so later renders read it back and skip the
 clustering entirely. To re-run any of it, delete that file first.
 
-
-## Leiden sweep
-
-```{python}
-#| label: umap-sweep-wr-joyal
-for start in range(0, len(resolution_keys), 3):
-    group = resolution_keys[start:start + 3]
-
-    # the second row is the colorbar strip the score UMAPs use. It is reserved here too,
-    # and left empty, so both sets of panels have identical geometry and superimpose.
-    fig, axs = plt.subplots(2, 3, height_ratios=[1, 0.22], figsize=(8.6, 3.4),
-                            constrained_layout=True)
-    for ax, leiden_key_v0 in zip(axs[0], group):
-        sc.pl.umap(
-            wr_joyal[draw_order],
-            color=leiden_key_v0,
-            ax=ax,
-            legend_loc="on data",
-            legend_fontsize=9,
-            frameon=True,
-            show=False,
-        )
-        ax.set_aspect("equal", adjustable="datalim")
-
-    for bar_ax in axs[1]:
-        bar_ax.axis("off")
-
-    for empty_ax in axs[0][len(group):]:
-        fig.delaxes(empty_ax)
-
-    plt.show()
-    plt.close(fig)
-```
-
-## Chosen resolution
-
-```{python}
-#| label: choose-resolution-wr-joyal
-wr_joyal_resolution = 1.0
-
-leiden_key = f"leiden_res_{wr_joyal_resolution:.2f}_v0"
-ranked_key = f"leiden_res_{wr_joyal_resolution:.2f}_v1"
-
-cluster_sizes = wr_joyal.obs[leiden_key].value_counts()
-ranked_labels = [str(rank) for rank in range(1, len(cluster_sizes) + 1)]
-size_rank = dict(zip(cluster_sizes.index, ranked_labels))
-
-wr_joyal.obs[ranked_key] = (
-    wr_joyal.obs[leiden_key]
-    .map(size_rank)
-    .astype("category")
-    .cat.reorder_categories(ranked_labels)
-)
-
-wr_joyal.uns[f"{ranked_key}_colors"] = [
-    mcolors.to_hex(plt.cm.tab20.colors[(int(label) - 1) % 20]) for label in ranked_labels
-]
-
-print(f"{ranked_key}: {wr_joyal.obs[ranked_key].nunique()} clusters")
-wr_joyal.obs[ranked_key].value_counts()
-```
 
 ## Clusters on the UMAP
 
@@ -366,7 +307,7 @@ wr_joyal.obs[ranked_key].value_counts()
 plt.rcParams["figure.figsize"] = (5.0, 4.3)
 
 ax = sc.pl.umap(
-    wr_joyal[draw_order],
+    wr_joyal,
     color=ranked_key,
     legend_loc="on data",
     legend_fontoutline=2,
@@ -547,6 +488,41 @@ plt.show()
 plt.close(fig)
 ```
 
+## Correlation with the reference by cell
+
+Correlating each cell against the same centroids says which clusters hold more than one cell
+type, without needing a marker panel to name the second one.
+
+```{python}
+#| label: correlate-cells-wr-joyal
+# every shared gene here, where the cluster-level correlation above uses variable genes only.
+# A centroid is dense, so its housekeeping bulk lifts all twelve classes together and flattens
+# the differences; a single cell is 97% zero over those same variable genes and needs every
+# gene it can get. Widening to all of them moves agreement with the cluster call from 90% to 95%.
+shared_genes = [gene for gene in wr_joyal.var_names if gene in reference_centroids.var_names]
+
+ranked_cells = pd.DataFrame(np.asarray(wr_joyal[:, shared_genes].X.todense())).rank(axis=1).to_numpy()
+ranked_classes = pd.DataFrame(
+    reference_centroids[:, shared_genes].X, index=reference_centroids.obs_names
+).rank(axis=1).to_numpy()
+
+# Spearman again, written out rather than looped so all twelve classes come out of one product
+ranked_cells = ranked_cells - ranked_cells.mean(axis=1, keepdims=True)
+ranked_classes = ranked_classes - ranked_classes.mean(axis=1, keepdims=True)
+cell_correlation = (ranked_cells @ ranked_classes.T) / np.sqrt(
+    (ranked_cells ** 2).sum(axis=1)[:, None] * (ranked_classes ** 2).sum(axis=1)[None, :]
+)
+
+wr_joyal.obs["cell_call"] = pd.Categorical(
+    reference_centroids.obs_names[cell_correlation.argmax(axis=1)],
+    categories=sorted(reference_centroids.obs_names),
+)
+
+cell_composition = pd.crosstab(wr_joyal.obs[ranked_key], wr_joyal.obs["cell_call"])
+(cell_composition.loc[:, cell_composition.sum() > 0]
+ .div(cell_composition.sum(axis=1), axis=0).mul(100).round().astype(int))
+```
+
 ## Marker scores
 
 ```{python}
@@ -723,35 +699,8 @@ plt.close(fig)
 cluster_calls = reference_correlation.idxmax(axis=1)
 marker_calls = mean_scores.idxmax(axis=1)
 
-# every cluster called by hand after reading the heatmap and the dotplot above, so the sheet
-# is exhaustive rather than a list of exceptions and the argmax above is fully shadowed. As
-# written it ratifies the reference on all 21 clusters — including the two the marker panel
-# reads differently, 10 (AC, not Horizontal: 702 cells is far too many for HC, and the
-# panel's Prox1/Lhx1 are expressed in amacrine subsets) and 20 (Astrocyte, not Muller Glia).
-# A cluster left out would fall back to its argmax.
-cluster_call_overrides = {
-    "1": "Rod",
-    "2": "BC",
-    "3": "Rod",
-    "4": "BC",
-    "5": "MG",
-    "6": "Rod",
-    "7": "AC",
-    "8": "BC",
-    "9": "Rod",
-    "10": "AC",
-    "11": "Cone",
-    "12": "BC",
-    "13": "AC",
-    "14": "AC",
-    "15": "RGC",
-    "16": "Endothelial",
-    "17": "HC",
-    "18": "Microglia",
-    "19": "AC",
-    "20": "Astrocyte",
-    "21": "MG",
-}
+# no calls made by hand yet, so every cluster below is the reference argmax
+cluster_call_overrides = {}
 cluster_calls.update(pd.Series(cluster_call_overrides))
 
 wr_joyal.obs["cell_type"] = wr_joyal.obs[ranked_key].map(cluster_calls).astype("category")
@@ -776,109 +725,45 @@ pd.DataFrame({
 })
 ```
 
-## Refining a call with the marker scores
+## Refining a call with the per-cell correlations
 
 ```{python}
 #| label: refine-cell-types-wr-joyal
 # the reference calls a whole cluster one class, so a population that never forms its own
-# cluster cannot be named — the vascular cells here are one cluster of 106 holding both
-# endothelium and pericytes. Where the marker panel says a cluster holds two classes, the
-# cells are split: each goes to whichever of the two scores is higher, provided that score
-# clears zero. score_genes centres a score on a control gene set, so above zero means
-# enriched above background; a cell clearing neither keeps the cluster's call rather than
-# being sent one way on noise.
+# cluster cannot be named from the cluster call alone. The per-cell correlations above say
+# where that happened: a class a real share of a cluster's cells correlate best with is a
+# population inside it, and those cells take that class instead of the cluster's.
 #
-# the assignment itself has no threshold to choose — the two scores are compared against
-# each other — but which clusters get split is gated below, because a disagreement between
-# the reference and the panel is not on its own evidence that a cluster holds two things.
+# a share rather than a count, because a handful of cells favouring a class is what dropout
+# does to every cluster; and a count as well, so a small cluster cannot qualify a class on
+# three cells. RPE takes 14% of one cluster here and is excluded by the share, which is the
+# right answer for a class with no business in a neural retina prep.
+min_share = 0.25
+min_cells = 10
 
-# the reference names classes and the marker panel names them differently; the two
-# vocabularies have to be joined by hand, and everything else here is derived from the join
-marker_to_class = {
-    "Rods": "Rod",                          "Cones": "Cone",
-    "RGC": "RGC",                           "Amacrine": "AC",
-    "Bipolar": "BC",                        "Horizontal": "HC",
-    "Muller_Glia": "MG",                    "Microglia": "Microglia",
-    "Vascular_Endothelial": "Endothelial",
-    "Pericytes": "Pericyte",                "Astrocytes": "Astrocyte",
-}
-
-# score_genes wrote score_<panel name>; mean_scores spaced the same names out for its axis
-class_scores = {cls: f"score_{panel}" for panel, cls in marker_to_class.items()}
-rival_calls = marker_calls.map(
-    {panel.replace("_", " "): cls for panel, cls in marker_to_class.items()}
-)
-
-# a cluster is a candidate exactly when the reference and the panel name it differently: one
-# of them is wrong, or — the case this chunk is for — the cluster holds both. The pair falls
-# out of the disagreement, the call above being the parent and the panel's answer the child.
-cluster_refinements = {
-    cluster: (cluster_calls[cluster], rival_calls[cluster])
-    for cluster in cluster_calls.index
-    if cluster_calls[cluster] != rival_calls[cluster]
-}
-
-# a disagreement says where to look, not what to do: the panels are not on a common scale,
-# so a panel of bright genes annexes cells from a dim one wherever the two are compared. The
-# split is therefore only applied where the cluster actually looks like two populations.
-#
-# the test is the L in the scatter below, written as a number. In a mixed cluster the two
-# scores trade off — a cell high on one is low on the other — so the rank correlation
-# between them across the cluster runs negative. In one population with a depth gradient
-# both scores rise and fall together and the correlation runs positive; cutting that at the
-# diagonal halves a gradient at an arbitrary place rather than finding a boundary. Requiring
-# both arms to be a real fraction of the cluster then throws out splits that shave off a
-# handful of cells.
-#
-# the scores have to actually trade off, not merely fail to correlate: a cluster sitting at
-# zero has the two scores independent of each other, which is a cloud rather than an L and
-# says nothing about there being two populations in it. The vascular cluster runs -0.75 and
-# the next candidate ten times weaker, so the cut is set between them rather than at zero.
-max_tradeoff = -0.25
-min_arm_cells = 10
-min_arm_fraction = 0.05
-
-split_diagnostics = []
-for cluster, (parent_class, child_class) in cluster_refinements.items():
+refinements = []
+for cluster in cell_composition.index:
+    counts = cell_composition.loc[cluster]
+    populations = counts[(counts >= min_cells) & (counts / counts.sum() >= min_share)]
     in_cluster = (wr_joyal.obs[ranked_key] == cluster).to_numpy()
-    parent_score = wr_joyal.obs[class_scores[parent_class]].to_numpy()
-    child_score = wr_joyal.obs[class_scores[child_class]].to_numpy()
 
-    reassigned = in_cluster & (child_score > parent_score) & (child_score > 0)
-    n_cluster = int(in_cluster.sum())
-    n_child = int(reassigned.sum())
+    for population in populations.index:
+        if population not in wr_joyal.obs["cell_type"].cat.categories:
+            wr_joyal.obs["cell_type"] = wr_joyal.obs["cell_type"].cat.add_categories([population])
+        # a cell keeps the cluster's call unless its own best class is one that qualified
+        takes = in_cluster & (wr_joyal.obs["cell_call"] == population).to_numpy()
+        wr_joyal.obs.loc[takes, "cell_type"] = population
 
-    tradeoff = np.corrcoef(
-        pd.Series(parent_score[in_cluster]).rank(),
-        pd.Series(child_score[in_cluster]).rank(),
-    )[0, 1]
-    smallest_arm = min(n_child, n_cluster - n_child)
-    applied = bool(
-        tradeoff < max_tradeoff
-        and smallest_arm >= max(min_arm_cells, min_arm_fraction * n_cluster)
-    )
-
-    if applied:
-        if child_class not in wr_joyal.obs["cell_type"].cat.categories:
-            wr_joyal.obs["cell_type"] = (
-                wr_joyal.obs["cell_type"].cat.add_categories([child_class])
-            )
-        wr_joyal.obs.loc[reassigned, "cell_type"] = child_class
-
-    split_diagnostics.append({
+    refinements.append({
         "cluster": cluster,
-        "parent": parent_class,
-        "child": child_class,
-        "cells": n_cluster,
-        "would move": n_child,
-        "tradeoff": round(tradeoff, 3),
-        "applied": applied,
+        "call": cluster_calls[cluster],
+        "cells": int(in_cluster.sum()),
+        "populations": ", ".join(f"{name} {n}" for name, n in populations.items()),
+        "refined": bool(len(populations) > 1 or populations.index[0] != cluster_calls[cluster]),
     })
 
-# a rejected row is not a failure: the cluster keeps its whole-cluster call, and the row is
-# the record of the panel having been overruled
-print(pd.DataFrame(split_diagnostics).to_string(index=False))
-split_applied = {row["cluster"]: row["applied"] for row in split_diagnostics}
+# a cluster with one qualifying population that is already its call is left exactly as it was
+print(pd.DataFrame(refinements).to_string(index=False))
 
 # a class added above lands at the end of the categories, which would put it last on every
 # axis downstream rather than in with the rest
@@ -889,51 +774,32 @@ wr_joyal.obs["cell_type"] = wr_joyal.obs["cell_type"].cat.reorder_categories(
 wr_joyal.uns["cell_type_colors"] = [
     cell_type_palette[cell_type] for cell_type in wr_joyal.obs["cell_type"].cat.categories
 ]
-
-wr_joyal.obs["cell_type"].value_counts()
 ```
 
-## Cells reassigned by marker score
+## Cluster composition by cell
 
 ```{python}
 #| label: refine-scatter-wr-joyal
-# the two scores against each other, one panel per refinement. A cluster worth splitting
-# looks like an L — each arm high on one score and flat on the other, with the middle
-# empty. A diffuse cloud across the diagonal means the two classes are not separable this
-# way, and the cluster should be left alone.
-fig, axes = plt.subplots(1, len(cluster_refinements), squeeze=False,
-                         figsize=(4.3 * len(cluster_refinements), 3.6),
-                         constrained_layout=True)
-for ax, (cluster, (parent_class, child_class)) in zip(axes.flat, cluster_refinements.items()):
-    in_cluster = (wr_joyal.obs[ranked_key] == cluster).to_numpy()
-    cluster_cells = sc.get.obs_df(
-        wr_joyal,
-        keys=[class_scores[parent_class], class_scores[child_class], "cell_type"],
-    )[in_cluster]
+# every cluster's per-cell composition as one bar. A cluster that is one cell type is a single
+# block; a mixed one is divided, and the dashed line is the share a class has to clear to be
+# treated as a population rather than as dropout.
+shares = cell_composition.div(cell_composition.sum(axis=1), axis=0)
+shares = shares.loc[:, shares.max() > 0.01]
 
-    for called_class in [parent_class, child_class]:
-        is_called = (cluster_cells["cell_type"] == called_class).to_numpy()
-        ax.scatter(
-            cluster_cells[class_scores[parent_class]][is_called],
-            cluster_cells[class_scores[child_class]][is_called],
-            s=14, c=cell_type_palette[called_class], linewidths=0,
-            label=f"{called_class} ({is_called.sum()})",
-        )
+fig, ax = plt.subplots(figsize=(9, 4.3), constrained_layout=True)
+left = np.zeros(len(shares))
+for population in shares.columns:
+    ax.barh(shares.index.astype(str), shares[population], left=left,
+            color=cell_type_palette[population], label=population, height=0.8)
+    left += shares[population].to_numpy()
 
-    # the decision boundary is the diagonal, which is the whole point of comparing the two
-    # scores rather than cutting one of them at a number
-    span = [
-        cluster_cells[[class_scores[parent_class], class_scores[child_class]]].min().min(),
-        cluster_cells[[class_scores[parent_class], class_scores[child_class]]].max().max(),
-    ]
-    ax.plot(span, span, color="#b0b0b0", linewidth=1.0, linestyle="--", zorder=0)
-
-    verdict = "split" if split_applied[cluster] else "left whole"
-    ax.set_title(f"Cluster {cluster} — {verdict}", fontsize=9)
-    ax.set_xlabel(f"{parent_class} score", fontsize=8)
-    ax.set_ylabel(f"{child_class} score", fontsize=8)
-    ax.tick_params(labelsize=7)
-    ax.legend(fontsize=7, frameon=False, loc="upper right")
+ax.axvline(min_share, color="#404040", linewidth=1.0, linestyle="--", zorder=3)
+ax.set_xlabel("Share of the cluster's cells", fontsize=9)
+ax.set_ylabel("Cluster", fontsize=9)
+ax.set_xlim(0, 1)
+ax.invert_yaxis()
+ax.tick_params(labelsize=8)
+ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
 
 plt.show()
 plt.close(fig)
@@ -946,7 +812,7 @@ plt.close(fig)
 plt.rcParams["figure.figsize"] = (6.5, 4.3)
 
 ax = sc.pl.umap(
-    wr_joyal[draw_order],
+    wr_joyal,
     color="cell_type",
     frameon=True,
     show=False,
@@ -1192,15 +1058,19 @@ plt.close(fig)
 
 ```{python}
 #| label: cluster-cd73ft-joyal
+cd73ft_joyal_resolution = 0.50   # chosen in oir-analysis and oir-analysis-2
+leiden_key = f"leiden_res_{cd73ft_joyal_resolution:.2f}_v0"
+ranked_key = f"leiden_res_{cd73ft_joyal_resolution:.2f}_v1"
+
 cd73ft_joyal_clustered_path = Path("data/processed/GSE150703_adata_Cd73ft_Joyal_clustered.h5ad")
 
-if cd73ft_joyal_clustered_path.exists():
+if cd73ft_joyal_clustered_path.exists():        # clustered once, then read back on later renders
     cd73ft_joyal = sc.read_h5ad(cd73ft_joyal_clustered_path)
 else:
-    cd73ft_joyal = adata[adata.obs["batch"] == "Cd73ft_Joyal"].copy()
+    cd73ft_joyal = adata[adata.obs["batch"] == "Cd73ft_Joyal"].copy()   # this batch only
 
     for column in ["condition", "timepoint", "prep", "lab", "replicate", "batch"]:
-        cd73ft_joyal.obs[column] = cd73ft_joyal.obs[column].cat.remove_unused_categories()
+        cd73ft_joyal.obs[column] = cd73ft_joyal.obs[column].cat.remove_unused_categories()  # drop empty levels
 
     cd73ft_joyal.var["mt"] = cd73ft_joyal.var_names.str.startswith("MT-")
     cd73ft_joyal.var["ribo"] = cd73ft_joyal.var_names.str.startswith(("RPS", "RPL"))
@@ -1208,108 +1078,49 @@ else:
     sc.pp.calculate_qc_metrics(
         cd73ft_joyal,
         qc_vars=["mt", "ribo", "hb"],
-        expr_type="log1p",
+        expr_type="log1p",                     # X is normalized, so these are not UMI fractions
         percent_top=None,
         log1p=False,
         inplace=True,
     )
 
-    sc.pp.filter_genes(cd73ft_joyal, min_cells=3)
+    sc.pp.filter_genes(cd73ft_joyal, min_cells=3)  # rarely detected genes distort the variable set
     sc.pp.highly_variable_genes(cd73ft_joyal, n_top_genes=2000, flavor="seurat")
     sc.pp.pca(cd73ft_joyal, svd_solver="arpack")
     sc.pp.neighbors(cd73ft_joyal, n_neighbors=10, n_pcs=40)
     sc.tl.umap(cd73ft_joyal)
 
-    for resolution in [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5]:
-        sc.tl.leiden(
-            cd73ft_joyal,
-            resolution=resolution,
-            key_added=f"leiden_res_{resolution:.2f}_v0",
-            flavor="igraph",
-            random_state=0,
-        )
+    sc.tl.leiden(
+        cd73ft_joyal,
+        resolution=cd73ft_joyal_resolution,
+        key_added=leiden_key,
+        flavor="igraph",
+        random_state=0,                        # the one argument here that decides the output
+    )
+
+    # renumbered by size, so cluster 1 is always the largest
+    cluster_sizes = cd73ft_joyal.obs[leiden_key].value_counts()
+    ranked_labels = [str(rank) for rank in range(1, len(cluster_sizes) + 1)]
+    cd73ft_joyal.obs[ranked_key] = (
+        cd73ft_joyal.obs[leiden_key]
+        .map(dict(zip(cluster_sizes.index, ranked_labels)))
+        .astype("category")
+        .cat.reorder_categories(ranked_labels)
+    )
+
+    for obs_key, palette in obs_palettes.items():
+        categories = cd73ft_joyal.obs[obs_key].cat.categories
+        cd73ft_joyal.uns[f"{obs_key}_colors"] = [palette[category] for category in categories]
+
+    cd73ft_joyal.uns[f"{ranked_key}_colors"] = [               # tab20, cycled once past 20 clusters
+        mcolors.to_hex(plt.cm.tab20.colors[(int(label) - 1) % 20]) for label in ranked_labels
+    ]
 
     cd73ft_joyal.write_h5ad(cd73ft_joyal_clustered_path)
-
-# below the guard, so these take effect on a re-render without re-clustering
-for obs_key, palette in obs_palettes.items():
-    categories = cd73ft_joyal.obs[obs_key].cat.categories
-    cd73ft_joyal.uns[f"{obs_key}_colors"] = [palette[category] for category in categories]
-
-draw_order = np.random.default_rng(0).permutation(cd73ft_joyal.n_obs)  # last drawn sits on top
-
-resolution_keys = [c for c in cd73ft_joyal.obs.columns if c.endswith("_v0")]  # every resolution swept
-
-for leiden_key_v0 in resolution_keys:                # tab20, cycled once past 20 clusters
-    categories = cd73ft_joyal.obs[leiden_key_v0].cat.categories
-    cd73ft_joyal.uns[f"{leiden_key_v0}_colors"] = [
-        mcolors.to_hex(plt.cm.tab20.colors[int(category) % 20]) for category in categories
-    ]
 
 cd73ft_joyal
 ```
 
-
-## Leiden sweep
-
-```{python}
-#| label: umap-sweep-cd73ft-joyal
-for start in range(0, len(resolution_keys), 3):
-    group = resolution_keys[start:start + 3]
-
-    # the second row is the colorbar strip the score UMAPs use. It is reserved here too,
-    # and left empty, so both sets of panels have identical geometry and superimpose.
-    fig, axs = plt.subplots(2, 3, height_ratios=[1, 0.22], figsize=(8.6, 3.4),
-                            constrained_layout=True)
-    for ax, leiden_key_v0 in zip(axs[0], group):
-        sc.pl.umap(
-            cd73ft_joyal[draw_order],
-            color=leiden_key_v0,
-            ax=ax,
-            legend_loc="on data",
-            legend_fontsize=9,
-            frameon=True,
-            show=False,
-        )
-        ax.set_aspect("equal", adjustable="datalim")
-
-    for bar_ax in axs[1]:
-        bar_ax.axis("off")
-
-    for empty_ax in axs[0][len(group):]:
-        fig.delaxes(empty_ax)
-
-    plt.show()
-    plt.close(fig)
-```
-
-## Chosen resolution
-
-```{python}
-#| label: choose-resolution-cd73ft-joyal
-cd73ft_joyal_resolution = 1.0
-
-leiden_key = f"leiden_res_{cd73ft_joyal_resolution:.2f}_v0"
-ranked_key = f"leiden_res_{cd73ft_joyal_resolution:.2f}_v1"
-
-cluster_sizes = cd73ft_joyal.obs[leiden_key].value_counts()
-ranked_labels = [str(rank) for rank in range(1, len(cluster_sizes) + 1)]
-size_rank = dict(zip(cluster_sizes.index, ranked_labels))
-
-cd73ft_joyal.obs[ranked_key] = (
-    cd73ft_joyal.obs[leiden_key]
-    .map(size_rank)
-    .astype("category")
-    .cat.reorder_categories(ranked_labels)
-)
-
-cd73ft_joyal.uns[f"{ranked_key}_colors"] = [
-    mcolors.to_hex(plt.cm.tab20.colors[(int(label) - 1) % 20]) for label in ranked_labels
-]
-
-print(f"{ranked_key}: {cd73ft_joyal.obs[ranked_key].nunique()} clusters")
-cd73ft_joyal.obs[ranked_key].value_counts()
-```
 
 ## Clusters on the UMAP
 
@@ -1320,7 +1131,7 @@ cd73ft_joyal.obs[ranked_key].value_counts()
 plt.rcParams["figure.figsize"] = (5.0, 4.3)
 
 ax = sc.pl.umap(
-    cd73ft_joyal[draw_order],
+    cd73ft_joyal,
     color=ranked_key,
     legend_loc="on data",
     legend_fontoutline=2,
@@ -1501,6 +1312,41 @@ plt.show()
 plt.close(fig)
 ```
 
+## Correlation with the reference by cell
+
+Correlating each cell against the same centroids says which clusters hold more than one cell
+type, without needing a marker panel to name the second one.
+
+```{python}
+#| label: correlate-cells-cd73ft-joyal
+# every shared gene here, where the cluster-level correlation above uses variable genes only.
+# A centroid is dense, so its housekeeping bulk lifts all twelve classes together and flattens
+# the differences; a single cell is 97% zero over those same variable genes and needs every
+# gene it can get. Widening to all of them moves agreement with the cluster call from 90% to 95%.
+shared_genes = [gene for gene in cd73ft_joyal.var_names if gene in reference_centroids.var_names]
+
+ranked_cells = pd.DataFrame(np.asarray(cd73ft_joyal[:, shared_genes].X.todense())).rank(axis=1).to_numpy()
+ranked_classes = pd.DataFrame(
+    reference_centroids[:, shared_genes].X, index=reference_centroids.obs_names
+).rank(axis=1).to_numpy()
+
+# Spearman again, written out rather than looped so all twelve classes come out of one product
+ranked_cells = ranked_cells - ranked_cells.mean(axis=1, keepdims=True)
+ranked_classes = ranked_classes - ranked_classes.mean(axis=1, keepdims=True)
+cell_correlation = (ranked_cells @ ranked_classes.T) / np.sqrt(
+    (ranked_cells ** 2).sum(axis=1)[:, None] * (ranked_classes ** 2).sum(axis=1)[None, :]
+)
+
+cd73ft_joyal.obs["cell_call"] = pd.Categorical(
+    reference_centroids.obs_names[cell_correlation.argmax(axis=1)],
+    categories=sorted(reference_centroids.obs_names),
+)
+
+cell_composition = pd.crosstab(cd73ft_joyal.obs[ranked_key], cd73ft_joyal.obs["cell_call"])
+(cell_composition.loc[:, cell_composition.sum() > 0]
+ .div(cell_composition.sum(axis=1), axis=0).mul(100).round().astype(int))
+```
+
 ## Marker scores
 
 ```{python}
@@ -1677,11 +1523,7 @@ plt.close(fig)
 cluster_calls = reference_correlation.idxmax(axis=1)
 marker_calls = mean_scores.idxmax(axis=1)
 
-# the calls a human made rather than the reference; everything not listed keeps its argmax.
-# Empty because this batch has not been read yet, so every call below is still the argmax.
-# The WR_Joyal sheet above does not transfer: its cluster numbers are that batch's own
-# Leiden run ranked by size and name nothing in common with these. Fill this in from the
-# table below once the heatmap and the dotplot have been looked at, e.g. {"7": "Pericyte"}.
+# no calls made by hand yet, so every cluster below is the reference argmax
 cluster_call_overrides = {}
 cluster_calls.update(pd.Series(cluster_call_overrides))
 
@@ -1707,116 +1549,45 @@ pd.DataFrame({
 })
 ```
 
-## Refining a call with the marker scores
+## Refining a call with the per-cell correlations
 
 ```{python}
 #| label: refine-cell-types-cd73ft-joyal
 # the reference calls a whole cluster one class, so a population that never forms its own
-# cluster cannot be named. That is not this batch's problem: endothelium (cluster 14, 215
-# cells) and pericytes (cluster 11, 305) each come out on their own here, where in WR_Joyal
-# they share one cluster of 106. The screen runs anyway — a mixed cluster is something to
-# find rather than assume — and the two candidates it turns up are both rejected below.
+# cluster cannot be named from the cluster call alone. The per-cell correlations above say
+# where that happened: a class a real share of a cluster's cells correlate best with is a
+# population inside it, and those cells take that class instead of the cluster's.
 #
-# where the marker panel says a cluster holds two classes, the cells are split: each goes to
-# whichever of the two scores is higher, provided that score clears zero. score_genes centres
-# a score on a control gene set, so above zero means enriched above background; a cell
-# clearing neither keeps the cluster's call rather than being sent one way on noise.
-#
-# the assignment itself has no threshold to choose — the two scores are compared against
-# each other — but which clusters get split is gated below, because a disagreement between
-# the reference and the panel is not on its own evidence that a cluster holds two things.
+# a share rather than a count, because a handful of cells favouring a class is what dropout
+# does to every cluster; and a count as well, so a small cluster cannot qualify a class on
+# three cells. RPE takes 14% of one cluster here and is excluded by the share, which is the
+# right answer for a class with no business in a neural retina prep.
+min_share = 0.25
+min_cells = 10
 
-# the reference names classes and the marker panel names them differently; the two
-# vocabularies have to be joined by hand, and everything else here is derived from the join
-marker_to_class = {
-    "Rods": "Rod",                          "Cones": "Cone",
-    "RGC": "RGC",                           "Amacrine": "AC",
-    "Bipolar": "BC",                        "Horizontal": "HC",
-    "Muller_Glia": "MG",                    "Microglia": "Microglia",
-    "Vascular_Endothelial": "Endothelial",
-    "Pericytes": "Pericyte",                "Astrocytes": "Astrocyte",
-}
-
-# score_genes wrote score_<panel name>; mean_scores spaced the same names out for its axis
-class_scores = {cls: f"score_{panel}" for panel, cls in marker_to_class.items()}
-rival_calls = marker_calls.map(
-    {panel.replace("_", " "): cls for panel, cls in marker_to_class.items()}
-)
-
-# a cluster is a candidate exactly when the reference and the panel name it differently: one
-# of them is wrong, or — the case this chunk is for — the cluster holds both. The pair falls
-# out of the disagreement, the call above being the parent and the panel's answer the child.
-cluster_refinements = {
-    cluster: (cluster_calls[cluster], rival_calls[cluster])
-    for cluster in cluster_calls.index
-    if cluster_calls[cluster] != rival_calls[cluster]
-}
-
-# a disagreement says where to look, not what to do: the panels are not on a common scale,
-# so a panel of bright genes annexes cells from a dim one wherever the two are compared. The
-# split is therefore only applied where the cluster actually looks like two populations.
-#
-# the test is the L in the scatter below, written as a number. In a mixed cluster the two
-# scores trade off — a cell high on one is low on the other — so the rank correlation
-# between them across the cluster runs negative. In one population with a depth gradient
-# both scores rise and fall together and the correlation runs positive; cutting that at the
-# diagonal halves a gradient at an arbitrary place rather than finding a boundary. Requiring
-# both arms to be a real fraction of the cluster then throws out splits that shave off a
-# handful of cells.
-#
-# the scores have to actually trade off, not merely fail to correlate: a cluster sitting at
-# zero has the two scores independent of each other, which is a cloud rather than an L and
-# says nothing about there being two populations in it.
-#
-# the cut is the one WR_Joyal's split was set on, kept here rather than retuned per batch —
-# a threshold moved until this batch's candidates fall the right side of it would not be a
-# test any more. Both land well short of it: cluster 12 at -0.14 and cluster 18 at -0.22 are
-# nearer the cloud than the L, and both keep their whole-cluster call.
-max_tradeoff = -0.25
-min_arm_cells = 10
-min_arm_fraction = 0.05
-
-split_diagnostics = []
-for cluster, (parent_class, child_class) in cluster_refinements.items():
+refinements = []
+for cluster in cell_composition.index:
+    counts = cell_composition.loc[cluster]
+    populations = counts[(counts >= min_cells) & (counts / counts.sum() >= min_share)]
     in_cluster = (cd73ft_joyal.obs[ranked_key] == cluster).to_numpy()
-    parent_score = cd73ft_joyal.obs[class_scores[parent_class]].to_numpy()
-    child_score = cd73ft_joyal.obs[class_scores[child_class]].to_numpy()
 
-    reassigned = in_cluster & (child_score > parent_score) & (child_score > 0)
-    n_cluster = int(in_cluster.sum())
-    n_child = int(reassigned.sum())
+    for population in populations.index:
+        if population not in cd73ft_joyal.obs["cell_type"].cat.categories:
+            cd73ft_joyal.obs["cell_type"] = cd73ft_joyal.obs["cell_type"].cat.add_categories([population])
+        # a cell keeps the cluster's call unless its own best class is one that qualified
+        takes = in_cluster & (cd73ft_joyal.obs["cell_call"] == population).to_numpy()
+        cd73ft_joyal.obs.loc[takes, "cell_type"] = population
 
-    tradeoff = np.corrcoef(
-        pd.Series(parent_score[in_cluster]).rank(),
-        pd.Series(child_score[in_cluster]).rank(),
-    )[0, 1]
-    smallest_arm = min(n_child, n_cluster - n_child)
-    applied = bool(
-        tradeoff < max_tradeoff
-        and smallest_arm >= max(min_arm_cells, min_arm_fraction * n_cluster)
-    )
-
-    if applied:
-        if child_class not in cd73ft_joyal.obs["cell_type"].cat.categories:
-            cd73ft_joyal.obs["cell_type"] = (
-                cd73ft_joyal.obs["cell_type"].cat.add_categories([child_class])
-            )
-        cd73ft_joyal.obs.loc[reassigned, "cell_type"] = child_class
-
-    split_diagnostics.append({
+    refinements.append({
         "cluster": cluster,
-        "parent": parent_class,
-        "child": child_class,
-        "cells": n_cluster,
-        "would move": n_child,
-        "tradeoff": round(tradeoff, 3),
-        "applied": applied,
+        "call": cluster_calls[cluster],
+        "cells": int(in_cluster.sum()),
+        "populations": ", ".join(f"{name} {n}" for name, n in populations.items()),
+        "refined": bool(len(populations) > 1 or populations.index[0] != cluster_calls[cluster]),
     })
 
-# a rejected row is not a failure: the cluster keeps its whole-cluster call, and the row is
-# the record of the panel having been overruled
-print(pd.DataFrame(split_diagnostics).to_string(index=False))
-split_applied = {row["cluster"]: row["applied"] for row in split_diagnostics}
+# a cluster with one qualifying population that is already its call is left exactly as it was
+print(pd.DataFrame(refinements).to_string(index=False))
 
 # a class added above lands at the end of the categories, which would put it last on every
 # axis downstream rather than in with the rest
@@ -1827,51 +1598,32 @@ cd73ft_joyal.obs["cell_type"] = cd73ft_joyal.obs["cell_type"].cat.reorder_catego
 cd73ft_joyal.uns["cell_type_colors"] = [
     cell_type_palette[cell_type] for cell_type in cd73ft_joyal.obs["cell_type"].cat.categories
 ]
-
-cd73ft_joyal.obs["cell_type"].value_counts()
 ```
 
-## Cells reassigned by marker score
+## Cluster composition by cell
 
 ```{python}
 #| label: refine-scatter-cd73ft-joyal
-# the two scores against each other, one panel per refinement. A cluster worth splitting
-# looks like an L — each arm high on one score and flat on the other, with the middle
-# empty. A diffuse cloud across the diagonal means the two classes are not separable this
-# way, and the cluster should be left alone.
-fig, axes = plt.subplots(1, len(cluster_refinements), squeeze=False,
-                         figsize=(4.3 * len(cluster_refinements), 3.6),
-                         constrained_layout=True)
-for ax, (cluster, (parent_class, child_class)) in zip(axes.flat, cluster_refinements.items()):
-    in_cluster = (cd73ft_joyal.obs[ranked_key] == cluster).to_numpy()
-    cluster_cells = sc.get.obs_df(
-        cd73ft_joyal,
-        keys=[class_scores[parent_class], class_scores[child_class], "cell_type"],
-    )[in_cluster]
+# every cluster's per-cell composition as one bar. A cluster that is one cell type is a single
+# block; a mixed one is divided, and the dashed line is the share a class has to clear to be
+# treated as a population rather than as dropout.
+shares = cell_composition.div(cell_composition.sum(axis=1), axis=0)
+shares = shares.loc[:, shares.max() > 0.01]
 
-    for called_class in [parent_class, child_class]:
-        is_called = (cluster_cells["cell_type"] == called_class).to_numpy()
-        ax.scatter(
-            cluster_cells[class_scores[parent_class]][is_called],
-            cluster_cells[class_scores[child_class]][is_called],
-            s=14, c=cell_type_palette[called_class], linewidths=0,
-            label=f"{called_class} ({is_called.sum()})",
-        )
+fig, ax = plt.subplots(figsize=(9, 4.3), constrained_layout=True)
+left = np.zeros(len(shares))
+for population in shares.columns:
+    ax.barh(shares.index.astype(str), shares[population], left=left,
+            color=cell_type_palette[population], label=population, height=0.8)
+    left += shares[population].to_numpy()
 
-    # the decision boundary is the diagonal, which is the whole point of comparing the two
-    # scores rather than cutting one of them at a number
-    span = [
-        cluster_cells[[class_scores[parent_class], class_scores[child_class]]].min().min(),
-        cluster_cells[[class_scores[parent_class], class_scores[child_class]]].max().max(),
-    ]
-    ax.plot(span, span, color="#b0b0b0", linewidth=1.0, linestyle="--", zorder=0)
-
-    verdict = "split" if split_applied[cluster] else "left whole"
-    ax.set_title(f"Cluster {cluster} — {verdict}", fontsize=9)
-    ax.set_xlabel(f"{parent_class} score", fontsize=8)
-    ax.set_ylabel(f"{child_class} score", fontsize=8)
-    ax.tick_params(labelsize=7)
-    ax.legend(fontsize=7, frameon=False, loc="upper right")
+ax.axvline(min_share, color="#404040", linewidth=1.0, linestyle="--", zorder=3)
+ax.set_xlabel("Share of the cluster's cells", fontsize=9)
+ax.set_ylabel("Cluster", fontsize=9)
+ax.set_xlim(0, 1)
+ax.invert_yaxis()
+ax.tick_params(labelsize=8)
+ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
 
 plt.show()
 plt.close(fig)
@@ -1884,7 +1636,7 @@ plt.close(fig)
 plt.rcParams["figure.figsize"] = (6.5, 4.3)
 
 ax = sc.pl.umap(
-    cd73ft_joyal[draw_order],
+    cd73ft_joyal,
     color="cell_type",
     frameon=True,
     show=False,
