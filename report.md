@@ -6,47 +6,28 @@ Brent Biddy
 - [Cd73ft_Joyal](#cd73ft_joyal)
 
 ``` python
-# imports and one type scale. Nothing here computes anything, and nothing here prints, which
-# is why this is the only chunk without a heading and the only one that makes no slide.
-#
-# the rcParams are load-bearing in a way that is easy to miss. Every figure in the document
-# is 200 dpi from here. The scanpy plots also take their axis labels, titles and legend text
-# from here, because those calls pass no font arguments of their own — so axes.labelsize,
-# axes.titlesize and legend.fontsize are the type on all eleven UMAPs. Everything drawn with
-# seaborn or matplotlib sets its sizes per axes instead and inherits none of it.
-#
-# every setting here reaches a label, which took a render to establish rather than a reading.
-# xtick.labelsize and figure.titlesize were dropped: nothing calls suptitle, and every x tick
-# in the document is hidden by sharex, stripped by scanpy, or sized per axes.
-#
-# the two that look droppable and are not:
-#   font.size    the on-data cluster numbers on the chosen-resolution UMAP, which pass no
-#                legend_fontsize of their own, and all dotplot text, which scanpy derives
-#                from it at about 0.83x. The sweep UMAPs escape it by passing 9 explicitly.
-#   ytick.labelsize  the colorbar tick labels on the four heatmaps, the one place the
-#                document leaves text to rcParams by accident rather than on purpose.
-from pathlib import Path
-from urllib.request import urlretrieve
+from pathlib import Path                    # the download and object paths
+from urllib.request import urlretrieve      # fetches the DGE matrix and the reference
 
-import anndata as ad
-import h5py
-import matplotlib.colors as mcolors
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-import scanpy as sc
-import seaborn as sns
-from anndata.io import read_elem
-from scipy.sparse import csr_matrix
+import anndata as ad                        # AnnData, for the object and the centroids
+import h5py                                 # reads the reference without pulling in its .raw
+import matplotlib.colors as mcolors         # to_hex, for the cluster palettes
+import matplotlib.pyplot as plt             # every figure
+import numpy as np                          # arrays, the rank correlations, the draw order
+import pandas as pd                         # the profile matrices and the printed tables
+import scanpy as sc                         # the analysis
+import seaborn as sns                       # the violins, heatmaps and scatters
+from anndata.io import read_elem            # one h5ad element at a time, for the reference
+from scipy.sparse import csr_matrix         # the DGE matrix, densely read and stored sparse
 
 plt.rcParams.update({
-    "figure.dpi": 200,
-    "savefig.dpi": 200,
-    "font.size": 12,
-    "axes.labelsize": 12,
-    "axes.titlesize": 13,
-    "ytick.labelsize": 10.5,
-    "legend.fontsize": 11,
+    "figure.dpi": 200,        # resolution of the figures as drawn
+    "savefig.dpi": 200,       # and as written out
+    "font.size": 12,          # the on-data cluster numbers; dotplot text derives from it
+    "axes.labelsize": 12,     # scanpy's UMAP axis labels
+    "axes.titlesize": 13,     # scanpy's panel titles
+    "ytick.labelsize": 10.5,  # the heatmap colorbar ticks
+    "legend.fontsize": 11,    # scanpy's UMAP legends
 })
 ```
 
