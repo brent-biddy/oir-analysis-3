@@ -431,9 +431,8 @@ wr_joyal.obs["cell_call"] = pd.Categorical(
     categories=sorted(reference_centroids.obs_names),
 )
 
+# read by the refinement below, and shown there as the purity column
 cell_composition = pd.crosstab(wr_joyal.obs[ranked_key], wr_joyal.obs["cell_call"])
-(cell_composition.loc[:, cell_composition.sum() > 0]
- .div(cell_composition.sum(axis=1), axis=0).mul(100).round().astype(int))
 ```
 
 ## Correlation by cluster
@@ -532,7 +531,10 @@ plt.show()
 plt.close(fig)
 ```
 
-## Preliminary cell types
+## Correlation by cell type
+
+The same correlations grouped by the calls the refinement settled on. A diagonal here is the
+check that the refinement worked: each cell type should correlate best with its own class.
 
 ```{python}
 #| label: annotate-clusters-wr-joyal
@@ -553,20 +555,7 @@ cell_type_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palett
 wr_joyal.uns["cell_type_colors"] = [
     cell_type_palette[cell_type] for cell_type in wr_joyal.obs["cell_type"].cat.categories
 ]
-
-# margin is the gap to the runner-up class: a cluster called on a hair's difference is one
-# to read the heatmap for, however high its correlation
-sorted_correlation = np.sort(mean_cell_correlation.to_numpy(), axis=1)
-
-pd.DataFrame({
-    "cell_type": cluster_calls,
-    "cells": wr_joyal.obs[ranked_key].value_counts(),
-    "mean z": mean_cell_correlation.max(axis=1).round(3),
-    "margin": (sorted_correlation[:, -1] - sorted_correlation[:, -2]).round(3),
-})
 ```
-
-## Refining the calls
 
 ```{python}
 #| label: refine-cell-types-wr-joyal
@@ -582,7 +571,6 @@ pd.DataFrame({
 min_share = 0.25
 min_cells = 10
 
-refinements = []
 for cluster in cell_composition.index:
     counts = cell_composition.loc[cluster]
     populations = counts[(counts >= min_cells) & (counts / counts.sum() >= min_share)]
@@ -595,20 +583,6 @@ for cluster in cell_composition.index:
         takes = in_cluster & (wr_joyal.obs["cell_call"] == population).to_numpy()
         wr_joyal.obs.loc[takes, "cell_type"] = population
 
-    refinements.append({
-        "cluster": cluster,
-        "call": cluster_calls[cluster],
-        "cells": int(in_cluster.sum()),
-        # the share held by the cluster's commonest per-cell call. A cluster near 1.0 is one
-        # cell type and needs nothing; the low ones are where to look.
-        "purity": round(counts.max() / counts.sum(), 2),
-        "populations": ", ".join(f"{name} {n}" for name, n in populations.items()),
-        "refined": bool(len(populations) > 1 or populations.index[0] != cluster_calls[cluster]),
-    })
-
-# a cluster with one qualifying population that is already its call is left exactly as it was
-print(pd.DataFrame(refinements).to_string(index=False))
-
 # a class added above lands at the end of the categories, which would put it last on every
 # axis downstream rather than in with the rest
 wr_joyal.obs["cell_type"] = wr_joyal.obs["cell_type"].cat.remove_unused_categories()
@@ -619,11 +593,6 @@ wr_joyal.uns["cell_type_colors"] = [
     cell_type_palette[cell_type] for cell_type in wr_joyal.obs["cell_type"].cat.categories
 ]
 ```
-
-## Correlation by cell type
-
-The same correlations grouped by the calls the refinement settled on. A diagonal here is the
-check that the refinement worked: each cell type should correlate best with its own class.
 
 ```{python}
 #| label: heatmap-cells-by-type-wr-joyal
@@ -1098,9 +1067,8 @@ cd73ft_joyal.obs["cell_call"] = pd.Categorical(
     categories=sorted(reference_centroids.obs_names),
 )
 
+# read by the refinement below, and shown there as the purity column
 cell_composition = pd.crosstab(cd73ft_joyal.obs[ranked_key], cd73ft_joyal.obs["cell_call"])
-(cell_composition.loc[:, cell_composition.sum() > 0]
- .div(cell_composition.sum(axis=1), axis=0).mul(100).round().astype(int))
 ```
 
 ## Correlation by cluster
@@ -1199,7 +1167,10 @@ plt.show()
 plt.close(fig)
 ```
 
-## Preliminary cell types
+## Correlation by cell type
+
+The same correlations grouped by the calls the refinement settled on. A diagonal here is the
+check that the refinement worked: each cell type should correlate best with its own class.
 
 ```{python}
 #| label: annotate-clusters-cd73ft-joyal
@@ -1220,20 +1191,7 @@ cell_type_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palett
 cd73ft_joyal.uns["cell_type_colors"] = [
     cell_type_palette[cell_type] for cell_type in cd73ft_joyal.obs["cell_type"].cat.categories
 ]
-
-# margin is the gap to the runner-up class: a cluster called on a hair's difference is one
-# to read the heatmap for, however high its correlation
-sorted_correlation = np.sort(mean_cell_correlation.to_numpy(), axis=1)
-
-pd.DataFrame({
-    "cell_type": cluster_calls,
-    "cells": cd73ft_joyal.obs[ranked_key].value_counts(),
-    "mean z": mean_cell_correlation.max(axis=1).round(3),
-    "margin": (sorted_correlation[:, -1] - sorted_correlation[:, -2]).round(3),
-})
 ```
-
-## Refining the calls
 
 ```{python}
 #| label: refine-cell-types-cd73ft-joyal
@@ -1249,7 +1207,6 @@ pd.DataFrame({
 min_share = 0.25
 min_cells = 10
 
-refinements = []
 for cluster in cell_composition.index:
     counts = cell_composition.loc[cluster]
     populations = counts[(counts >= min_cells) & (counts / counts.sum() >= min_share)]
@@ -1262,20 +1219,6 @@ for cluster in cell_composition.index:
         takes = in_cluster & (cd73ft_joyal.obs["cell_call"] == population).to_numpy()
         cd73ft_joyal.obs.loc[takes, "cell_type"] = population
 
-    refinements.append({
-        "cluster": cluster,
-        "call": cluster_calls[cluster],
-        "cells": int(in_cluster.sum()),
-        # the share held by the cluster's commonest per-cell call. A cluster near 1.0 is one
-        # cell type and needs nothing; the low ones are where to look.
-        "purity": round(counts.max() / counts.sum(), 2),
-        "populations": ", ".join(f"{name} {n}" for name, n in populations.items()),
-        "refined": bool(len(populations) > 1 or populations.index[0] != cluster_calls[cluster]),
-    })
-
-# a cluster with one qualifying population that is already its call is left exactly as it was
-print(pd.DataFrame(refinements).to_string(index=False))
-
 # a class added above lands at the end of the categories, which would put it last on every
 # axis downstream rather than in with the rest
 cd73ft_joyal.obs["cell_type"] = cd73ft_joyal.obs["cell_type"].cat.remove_unused_categories()
@@ -1286,11 +1229,6 @@ cd73ft_joyal.uns["cell_type_colors"] = [
     cell_type_palette[cell_type] for cell_type in cd73ft_joyal.obs["cell_type"].cat.categories
 ]
 ```
-
-## Correlation by cell type
-
-The same correlations grouped by the calls the refinement settled on. A diagonal here is the
-check that the refinement worked: each cell type should correlate best with its own class.
 
 ```{python}
 #| label: heatmap-cells-by-type-cd73ft-joyal

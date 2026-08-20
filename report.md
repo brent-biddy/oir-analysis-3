@@ -450,41 +450,9 @@ wr_joyal.obs["cell_call"] = pd.Categorical(
     categories=sorted(reference_centroids.obs_names),
 )
 
+# read by the refinement below, and shown there as the purity column
 cell_composition = pd.crosstab(wr_joyal.obs[ranked_key], wr_joyal.obs["cell_call"])
-(cell_composition.loc[:, cell_composition.sum() > 0]
- .div(cell_composition.sum(axis=1), axis=0).mul(100).round().astype(int))
 ```
-
-<div>
-<style scoped>
-    .dataframe tbody tr th:only-of-type {
-        vertical-align: middle;
-    }
-&#10;    .dataframe tbody tr th {
-        vertical-align: top;
-    }
-&#10;    .dataframe thead th {
-        text-align: right;
-    }
-</style>
-
-| cell_call | AC | Astrocyte | BC | Cone | Endothelial | HC | MG | Microglia | Pericyte | RGC | RPE | Rod |
-|----|----|----|----|----|----|----|----|----|----|----|----|----|
-| leiden_res_0.40_v1 |  |  |  |  |  |  |  |  |  |  |  |  |
-| 1 | 1 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 97 |
-| 2 | 1 | 0 | 96 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
-| 3 | 90 | 0 | 4 | 0 | 0 | 2 | 0 | 0 | 0 | 1 | 0 | 3 |
-| 4 | 0 | 0 | 99 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| 5 | 0 | 1 | 1 | 0 | 0 | 0 | 97 | 0 | 0 | 0 | 0 | 0 |
-| 6 | 0 | 0 | 1 | 99 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| 7 | 100 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 100 | 0 | 0 |
-| 9 | 0 | 47 | 0 | 0 | 0 | 0 | 39 | 0 | 0 | 0 | 14 | 0 |
-| 10 | 0 | 0 | 0 | 0 | 39 | 0 | 0 | 0 | 60 | 0 | 1 | 0 |
-| 11 | 0 | 0 | 0 | 0 | 0 | 100 | 0 | 0 | 0 | 0 | 0 | 0 |
-| 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 99 | 0 | 0 | 0 | 1 |
-
-</div>
 
 ## Correlation by cluster
 
@@ -590,7 +558,11 @@ plt.close(fig)
 src="oir_analysis_files/figure-commonmark/umap-cell-correlation-wr-joyal-output-1.png"
 id="umap-cell-correlation-wr-joyal" />
 
-## Preliminary cell types
+## Correlation by cell type
+
+The same correlations grouped by the calls the refinement settled on. A
+diagonal here is the check that the refinement worked: each cell type
+should correlate best with its own class.
 
 ``` python
 # the call is the best-correlating reference class. The marker scores stay in the document
@@ -610,51 +582,7 @@ cell_type_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palett
 wr_joyal.uns["cell_type_colors"] = [
     cell_type_palette[cell_type] for cell_type in wr_joyal.obs["cell_type"].cat.categories
 ]
-
-# margin is the gap to the runner-up class: a cluster called on a hair's difference is one
-# to read the heatmap for, however high its correlation
-sorted_correlation = np.sort(mean_cell_correlation.to_numpy(), axis=1)
-
-pd.DataFrame({
-    "cell_type": cluster_calls,
-    "cells": wr_joyal.obs[ranked_key].value_counts(),
-    "mean z": mean_cell_correlation.max(axis=1).round(3),
-    "margin": (sorted_correlation[:, -1] - sorted_correlation[:, -2]).round(3),
-})
 ```
-
-<div>
-<style scoped>
-    .dataframe tbody tr th:only-of-type {
-        vertical-align: middle;
-    }
-&#10;    .dataframe tbody tr th {
-        vertical-align: top;
-    }
-&#10;    .dataframe thead th {
-        text-align: right;
-    }
-</style>
-
-|                    | cell_type   | cells | mean z | margin |
-|--------------------|-------------|-------|--------|--------|
-| leiden_res_0.40_v1 |             |       |        |        |
-| 1                  | Rod         | 5613  | 2.046  | 0.521  |
-| 2                  | BC          | 2952  | 1.843  | 0.997  |
-| 3                  | AC          | 2029  | 1.514  | 0.408  |
-| 4                  | BC          | 1768  | 2.050  | 1.337  |
-| 5                  | MG          | 1230  | 2.260  | 0.810  |
-| 6                  | Cone        | 700   | 2.095  | 0.739  |
-| 7                  | AC          | 299   | 1.768  | 0.433  |
-| 8                  | RGC         | 140   | 1.858  | 0.524  |
-| 9                  | Astrocyte   | 120   | 1.638  | 0.129  |
-| 10                 | Endothelial | 106   | 1.807  | 0.110  |
-| 11                 | HC          | 101   | 2.193  | 1.244  |
-| 12                 | Microglia   | 85    | 2.535  | 1.906  |
-
-</div>
-
-## Refining the calls
 
 ``` python
 # the reference calls a whole cluster one class, so a population that never forms its own
@@ -669,7 +597,6 @@ pd.DataFrame({
 min_share = 0.25
 min_cells = 10
 
-refinements = []
 for cluster in cell_composition.index:
     counts = cell_composition.loc[cluster]
     populations = counts[(counts >= min_cells) & (counts / counts.sum() >= min_share)]
@@ -682,20 +609,6 @@ for cluster in cell_composition.index:
         takes = in_cluster & (wr_joyal.obs["cell_call"] == population).to_numpy()
         wr_joyal.obs.loc[takes, "cell_type"] = population
 
-    refinements.append({
-        "cluster": cluster,
-        "call": cluster_calls[cluster],
-        "cells": int(in_cluster.sum()),
-        # the share held by the cluster's commonest per-cell call. A cluster near 1.0 is one
-        # cell type and needs nothing; the low ones are where to look.
-        "purity": round(counts.max() / counts.sum(), 2),
-        "populations": ", ".join(f"{name} {n}" for name, n in populations.items()),
-        "refined": bool(len(populations) > 1 or populations.index[0] != cluster_calls[cluster]),
-    })
-
-# a cluster with one qualifying population that is already its call is left exactly as it was
-print(pd.DataFrame(refinements).to_string(index=False))
-
 # a class added above lands at the end of the categories, which would put it last on every
 # axis downstream rather than in with the rest
 wr_joyal.obs["cell_type"] = wr_joyal.obs["cell_type"].cat.remove_unused_categories()
@@ -706,26 +619,6 @@ wr_joyal.uns["cell_type_colors"] = [
     cell_type_palette[cell_type] for cell_type in wr_joyal.obs["cell_type"].cat.categories
 ]
 ```
-
-    cluster        call  cells  purity                 populations  refined
-          1         Rod   5613    0.97                    Rod 5440    False
-          2          BC   2952    0.96                     BC 2837    False
-          3          AC   2029    0.90                     AC 1819    False
-          4          BC   1768    0.99                     BC 1759    False
-          5          MG   1230    0.97                     MG 1194    False
-          6        Cone    700    0.99                    Cone 692    False
-          7          AC    299    1.00                      AC 299    False
-          8         RGC    140    1.00                     RGC 140    False
-          9   Astrocyte    120    0.47         Astrocyte 56, MG 47     True
-         10 Endothelial    106    0.60 Endothelial 41, Pericyte 64     True
-         11          HC    101    1.00                      HC 101    False
-         12   Microglia     85    0.99                Microglia 84    False
-
-## Correlation by cell type
-
-The same correlations grouped by the calls the refinement settled on. A
-diagonal here is the check that the refinement worked: each cell type
-should correlate best with its own class.
 
 ``` python
 # the same correlations grouped by the call the refinement settled on rather than by cluster,
@@ -1243,43 +1136,9 @@ cd73ft_joyal.obs["cell_call"] = pd.Categorical(
     categories=sorted(reference_centroids.obs_names),
 )
 
+# read by the refinement below, and shown there as the purity column
 cell_composition = pd.crosstab(cd73ft_joyal.obs[ranked_key], cd73ft_joyal.obs["cell_call"])
-(cell_composition.loc[:, cell_composition.sum() > 0]
- .div(cell_composition.sum(axis=1), axis=0).mul(100).round().astype(int))
 ```
-
-<div>
-<style scoped>
-    .dataframe tbody tr th:only-of-type {
-        vertical-align: middle;
-    }
-&#10;    .dataframe tbody tr th {
-        vertical-align: top;
-    }
-&#10;    .dataframe thead th {
-        text-align: right;
-    }
-</style>
-
-| cell_call | AC | Astrocyte | BC | Cone | Endothelial | HC | MG | Microglia | Pericyte | RGC | RPE | Rod |
-|----|----|----|----|----|----|----|----|----|----|----|----|----|
-| leiden_res_0.50_v1 |  |  |  |  |  |  |  |  |  |  |  |  |
-| 1 | 0 | 0 | 99 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| 2 | 0 | 1 | 0 | 0 | 0 | 0 | 98 | 0 | 0 | 0 | 0 | 0 |
-| 3 | 3 | 0 | 95 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
-| 4 | 1 | 0 | 98 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| 5 | 72 | 0 | 6 | 0 | 0 | 1 | 1 | 0 | 0 | 18 | 0 | 0 |
-| 6 | 0 | 0 | 3 | 96 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
-| 7 | 0 | 1 | 2 | 0 | 0 | 0 | 0 | 97 | 0 | 0 | 0 | 0 |
-| 8 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 99 | 0 | 0 | 0 |
-| 9 | 0 | 0 | 0 | 0 | 100 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| 10 | 1 | 5 | 0 | 0 | 0 | 0 | 78 | 1 | 0 | 0 | 15 | 0 |
-| 11 | 0 | 0 | 0 | 0 | 0 | 100 | 0 | 0 | 0 | 0 | 0 | 0 |
-| 12 | 0 | 100 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| 13 | 2 | 0 | 9 | 1 | 0 | 0 | 1 | 1 | 0 | 0 | 1 | 84 |
-| 14 | 7 | 5 | 49 | 2 | 19 | 0 | 14 | 0 | 0 | 5 | 0 | 0 |
-
-</div>
 
 ## Correlation by cluster
 
@@ -1385,7 +1244,11 @@ plt.close(fig)
 src="oir_analysis_files/figure-commonmark/umap-cell-correlation-cd73ft-joyal-output-1.png"
 id="umap-cell-correlation-cd73ft-joyal" />
 
-## Preliminary cell types
+## Correlation by cell type
+
+The same correlations grouped by the calls the refinement settled on. A
+diagonal here is the check that the refinement worked: each cell type
+should correlate best with its own class.
 
 ``` python
 # the call is the best-correlating reference class. The marker scores stay in the document
@@ -1405,53 +1268,7 @@ cell_type_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palett
 cd73ft_joyal.uns["cell_type_colors"] = [
     cell_type_palette[cell_type] for cell_type in cd73ft_joyal.obs["cell_type"].cat.categories
 ]
-
-# margin is the gap to the runner-up class: a cluster called on a hair's difference is one
-# to read the heatmap for, however high its correlation
-sorted_correlation = np.sort(mean_cell_correlation.to_numpy(), axis=1)
-
-pd.DataFrame({
-    "cell_type": cluster_calls,
-    "cells": cd73ft_joyal.obs[ranked_key].value_counts(),
-    "mean z": mean_cell_correlation.max(axis=1).round(3),
-    "margin": (sorted_correlation[:, -1] - sorted_correlation[:, -2]).round(3),
-})
 ```
-
-<div>
-<style scoped>
-    .dataframe tbody tr th:only-of-type {
-        vertical-align: middle;
-    }
-&#10;    .dataframe tbody tr th {
-        vertical-align: top;
-    }
-&#10;    .dataframe thead th {
-        text-align: right;
-    }
-</style>
-
-|                    | cell_type   | cells | mean z | margin |
-|--------------------|-------------|-------|--------|--------|
-| leiden_res_0.50_v1 |             |       |        |        |
-| 1                  | BC          | 2860  | 2.073  | 1.211  |
-| 2                  | MG          | 1899  | 2.160  | 0.658  |
-| 3                  | BC          | 1287  | 1.899  | 1.002  |
-| 4                  | BC          | 1244  | 2.099  | 1.256  |
-| 5                  | AC          | 916   | 1.523  | 0.303  |
-| 6                  | Cone        | 742   | 2.066  | 0.883  |
-| 7                  | Microglia   | 305   | 2.439  | 1.730  |
-| 8                  | Pericyte    | 305   | 2.015  | 0.600  |
-| 9                  | Endothelial | 218   | 2.244  | 1.100  |
-| 10                 | MG          | 197   | 1.649  | 0.265  |
-| 11                 | HC          | 120   | 2.183  | 1.182  |
-| 12                 | Astrocyte   | 113   | 2.135  | 0.793  |
-| 13                 | Rod         | 80    | 1.694  | 0.400  |
-| 14                 | BC          | 43    | 1.122  | 0.566  |
-
-</div>
-
-## Refining the calls
 
 ``` python
 # the reference calls a whole cluster one class, so a population that never forms its own
@@ -1466,7 +1283,6 @@ pd.DataFrame({
 min_share = 0.25
 min_cells = 10
 
-refinements = []
 for cluster in cell_composition.index:
     counts = cell_composition.loc[cluster]
     populations = counts[(counts >= min_cells) & (counts / counts.sum() >= min_share)]
@@ -1479,20 +1295,6 @@ for cluster in cell_composition.index:
         takes = in_cluster & (cd73ft_joyal.obs["cell_call"] == population).to_numpy()
         cd73ft_joyal.obs.loc[takes, "cell_type"] = population
 
-    refinements.append({
-        "cluster": cluster,
-        "call": cluster_calls[cluster],
-        "cells": int(in_cluster.sum()),
-        # the share held by the cluster's commonest per-cell call. A cluster near 1.0 is one
-        # cell type and needs nothing; the low ones are where to look.
-        "purity": round(counts.max() / counts.sum(), 2),
-        "populations": ", ".join(f"{name} {n}" for name, n in populations.items()),
-        "refined": bool(len(populations) > 1 or populations.index[0] != cluster_calls[cluster]),
-    })
-
-# a cluster with one qualifying population that is already its call is left exactly as it was
-print(pd.DataFrame(refinements).to_string(index=False))
-
 # a class added above lands at the end of the categories, which would put it last on every
 # axis downstream rather than in with the rest
 cd73ft_joyal.obs["cell_type"] = cd73ft_joyal.obs["cell_type"].cat.remove_unused_categories()
@@ -1503,28 +1305,6 @@ cd73ft_joyal.uns["cell_type_colors"] = [
     cell_type_palette[cell_type] for cell_type in cd73ft_joyal.obs["cell_type"].cat.categories
 ]
 ```
-
-    cluster        call  cells  purity     populations  refined
-          1          BC   2860    0.99         BC 2842    False
-          2          MG   1899    0.98         MG 1869    False
-          3          BC   1287    0.95         BC 1228    False
-          4          BC   1244    0.98         BC 1225    False
-          5          AC    916    0.72          AC 662    False
-          6        Cone    742    0.96        Cone 710    False
-          7   Microglia    305    0.97   Microglia 296    False
-          8    Pericyte    305    0.99    Pericyte 303    False
-          9 Endothelial    218    1.00 Endothelial 218    False
-         10          MG    197    0.78          MG 154    False
-         11          HC    120    1.00          HC 120    False
-         12   Astrocyte    113    1.00   Astrocyte 113    False
-         13         Rod     80    0.84          Rod 67    False
-         14          BC     43    0.49           BC 21    False
-
-## Correlation by cell type
-
-The same correlations grouped by the calls the refinement settled on. A
-diagonal here is the check that the refinement worked: each cell type
-should correlate best with its own class.
 
 ``` python
 # the same correlations grouped by the call the refinement settled on rather than by cluster,
