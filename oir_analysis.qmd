@@ -390,13 +390,13 @@ plt.close(fig)
 
 ```{python}
 #| label: correlate-reference-wr-joyal
-# correlated over the query's variable genes rather than everything shared: the
-# housekeeping bulk is near-identical in every class and only lifts all twelve correlations
-# together, flattening the differences the call is made on
-feature_genes = [
-    gene for gene in wr_joyal.var_names[wr_joyal.var["highly_variable"]]
-    if gene in reference_centroids.var_names
-]
+# every gene the two share, matching the per-cell correlation below. Restricting to variable
+# genes was tried and does what its own rationale claims — the housekeeping bulk lifts all
+# twelve correlations together, so dropping it widens the mean margin from 0.061 to 0.080.
+# It also loses the astrocyte cluster: on variable genes cluster 9 is called MG by 0.028, and
+# on all of them it is Astrocyte, which is what its Pax2, Gfap and Rlbp1 say it is. Wider
+# margins mean the classes look more separable, not that the call is more often right.
+feature_genes = [gene for gene in wr_joyal.var_names if gene in reference_centroids.var_names]
 
 cluster_profiles = pd.DataFrame(
     [
@@ -425,8 +425,7 @@ reference_correlation = pd.DataFrame(
     columns=reference_profiles.index,
 )
 
-print(f"{len(feature_genes)} of {int(wr_joyal.var['highly_variable'].sum())} "
-      f"variable genes found in the reference")
+print(f"{len(feature_genes):,} of {wr_joyal.n_vars:,} genes shared with the reference")
 reference_correlation.round(3)
 ```
 
@@ -509,12 +508,16 @@ ranked_classes = pd.DataFrame(
 # Spearman again, written out rather than looped so all twelve classes come out of one product
 ranked_cells = ranked_cells - ranked_cells.mean(axis=1, keepdims=True)
 ranked_classes = ranked_classes - ranked_classes.mean(axis=1, keepdims=True)
-cell_correlation = (ranked_cells @ ranked_classes.T) / np.sqrt(
-    (ranked_cells ** 2).sum(axis=1)[:, None] * (ranked_classes ** 2).sum(axis=1)[None, :]
+cell_correlation = pd.DataFrame(
+    (ranked_cells @ ranked_classes.T) / np.sqrt(
+        (ranked_cells ** 2).sum(axis=1)[:, None] * (ranked_classes ** 2).sum(axis=1)[None, :]
+    ),
+    index=wr_joyal.obs_names,
+    columns=reference_centroids.obs_names,
 )
 
 wr_joyal.obs["cell_call"] = pd.Categorical(
-    reference_centroids.obs_names[cell_correlation.argmax(axis=1)],
+    cell_correlation.idxmax(axis=1),
     categories=sorted(reference_centroids.obs_names),
 )
 
@@ -523,167 +526,99 @@ cell_composition = pd.crosstab(wr_joyal.obs[ranked_key], wr_joyal.obs["cell_call
  .div(cell_composition.sum(axis=1), axis=0).mul(100).round().astype(int))
 ```
 
-## Marker scores
+## Per-cell correlation by cluster
+
+The per-cell correlations averaged over each cluster, shown the same three ways as the
+centroid heatmap. Where a cluster holds one cell type it has one bright class; where it holds
+two, the brightness is shared.
 
 ```{python}
-#| label: score-markers-wr-joyal
-retina_markers = {
-    "Rods": ["Rho", "Pde6b", "Nrl", "Nr2e3"],
-    "Cones": ["Opn1mw", "Opn1sw", "Arr3", "Thrb"],
-    "RGC": ["Rbpms", "Sncg", "Pou4f1", "Pou4f2"],
-    "Amacrine": ["Tfap2a", "Tfap2b", "Chat", "Vsx1"],
-    "Bipolar": ["Vsx2", "Isl1", "Prkca", "Cabp5"],
-    "Horizontal": ["Onecut1", "Onecut2", "Lhx1", "Prox1"],
-    "Muller_Glia": ["Rlbp1", "Glul", "Sox9", "Slc1a3"],
-    "Microglia": ["Cx3cr1", "P2ry12", "Tmem119", "Aif1"],
-    "Vascular_Endothelial": ["Cdh5", "Pecam1", "Tek"],
-    "Pericytes": ["Pdgfrb", "Acta2", "Des"],
-    "Astrocytes": ["Gfap", "Aldh1l1", "Aqp4"],
+#| label: heatmap-cells-by-cluster-wr-joyal
+# the same matrix three ways, matching the centroid heatmap above so the two can be read
+# against each other.
+#
+# standardized within each cell before averaging, which matters more than it looks. A cell's
+# correlation to every class rises with how many genes it captured: across these clusters the
+# mean gene count and the mean correlation to all twelve classes correlate at 0.96. Averaging
+# the raw numbers therefore draws a map of sequencing depth, on which the deepest clusters look
+# well matched to everything. Subtracting each cell's own mean and dividing by its own spread
+# leaves only which classes that cell preferred, which is the question.
+standardized = cell_correlation.sub(cell_correlation.mean(axis=1), axis=0).div(
+    cell_correlation.std(axis=1), axis=0
+)
+mean_cell_correlation = standardized.groupby(wr_joyal.obs[ranked_key], observed=True).mean()
+
+cell_class_range = mean_cell_correlation.max(axis=0) - mean_cell_correlation.min(axis=0)
+cell_scaled_by_class = mean_cell_correlation.sub(
+    mean_cell_correlation.min(axis=0), axis=1
+).div(cell_class_range, axis=1)
+
+cell_cluster_range = mean_cell_correlation.max(axis=1) - mean_cell_correlation.min(axis=1)
+cell_scaled_by_cluster = mean_cell_correlation.sub(
+    mean_cell_correlation.min(axis=1), axis=0
+).div(cell_cluster_range, axis=0)
+
+cell_correlation_panels = {
+    "Mean per-cell z": mean_cell_correlation,
+    "Scaled per class": cell_scaled_by_class,
+    "Scaled per cluster": cell_scaled_by_cluster,
 }
 
-score_keys = []
-markers_present = {}
-for cell_type, genes in retina_markers.items():
-    present = [gene.upper() for gene in genes if gene.upper() in wr_joyal.var_names]
-    score_key = f"score_{cell_type}"
-    sc.tl.score_genes(wr_joyal, gene_list=present, score_name=score_key)
-    score_keys.append(score_key)
-    markers_present[cell_type] = present
-    print(f"{cell_type}: {len(present)}/{len(genes)} markers")
-```
+# the diagonal ordering the centroid heatmap uses, derived the same way
+cell_class_order = []
+for cluster in cell_scaled_by_cluster.index:
+    best = cell_scaled_by_cluster.loc[cluster].idxmax()
+    if best not in cell_class_order:
+        cell_class_order.append(best)
+cell_class_order += [n for n in cell_scaled_by_cluster.columns if n not in cell_class_order]
 
-## Marker scores by cluster
-
-```{python}
-#| label: score-violin-by-cluster-wr-joyal
-score_df = sc.get.obs_df(wr_joyal, keys=[ranked_key] + score_keys)
-
-for start in range(0, len(score_keys), 6):
-    group = score_keys[start:start + 6]
-    group_types = list(retina_markers)[start:start + 6]
-
-    fig, axes = plt.subplots(len(group), 1, squeeze=False, sharex=True, figsize=(9, 4.3),
-                             constrained_layout=True)
-    for ax, score_key, cell_type in zip(axes.flat, group, group_types):
-        sns.violinplot(data=score_df, x=ranked_key, y=score_key, hue=ranked_key,
-                       palette=cluster_palette, legend=False, dodge=False, cut=0,
-                       density_norm="width", inner="box", inner_kws=violin_inner_kws,
-                       linewidth=0.5, saturation=1, ax=ax)
-
-        cluster_order = list(wr_joyal.obs[ranked_key].cat.categories)
-        for body in ax.collections:
-            extents = body.get_paths()[0].get_extents()
-            body.set_facecolor(cluster_palette[cluster_order[round((extents.x0 + extents.x1) / 2)]])
-
-        ax.set_ylabel(f"{cell_type.replace('_', ' ')} score", fontsize=7)
-        ax.set_xlabel("")
-        ax.tick_params(axis="y", labelsize=6)
-        ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
-        ax.set_axisbelow(True)
-
-    axes[-1][0].set_xlabel("Cluster", fontsize=9)
-    axes[-1][0].tick_params(axis="x", labelsize=8)
-    plt.show()
-    plt.close(fig)
-```
-
-## Marker scores on the UMAP
-
-```{python}
-#| label: umap-scores-wr-joyal
-for start in range(0, len(score_keys), 3):
-    group = score_keys[start:start + 3]
-
-    fig, axs = plt.subplots(2, 3, height_ratios=[1, 0.22], figsize=(8.6, 3.4),
-                            constrained_layout=True)
-    for ax, bar_ax, score_key in zip(axs[0], axs[1], group):
-        sc.pl.umap(
-            wr_joyal,
-            color=score_key,
-            ax=ax,
-            frameon=True,
-            colorbar_loc=None,
-            show=False,
-        )
-        ax.set_aspect("equal", adjustable="datalim")
-
-        # the strip reserves the space; the colorbar drawn inside it is excluded from the
-        # layout so its tick labels cannot push the panel around
-        bar_ax.axis("off")
-        colorbar_ax = bar_ax.inset_axes([0.325, 0.82, 0.35, 0.18])
-        colorbar_ax.set_in_layout(False)
-        colorbar = fig.colorbar(ax.collections[0], cax=colorbar_ax, orientation="horizontal")
-
-        # placed explicitly at the ends and middle: the automatic locator picks its own round
-        # numbers per score, so the tick count and positions differ from panel to panel
-        score_low, score_high = ax.collections[0].get_clim()
-        colorbar_ticks = np.linspace(score_low, score_high, 3)
-        colorbar.set_ticks(colorbar_ticks, labels=[f"{tick:.2f}" for tick in colorbar_ticks])
-        colorbar.ax.tick_params(labelsize=7)
-
-    for empty_ax in axs[0][len(group):]:
-        fig.delaxes(empty_ax)
-    for empty_bar_ax in axs[1][len(group):]:
-        empty_bar_ax.axis("off")
-
-    plt.show()
-    plt.close(fig)
-```
-
-## Marker genes by cluster
-
-```{python}
-#| label: dotplot-markers-wr-joyal
-# figsize is deliberately not passed: dotplot derives its own from the gene and cluster counts,
-# and forcing it to slide dimensions packs 41 genes across 21 clusters until the dots overlap
-sc.pl.dotplot(wr_joyal, markers_present, groupby=ranked_key, standard_scale="var")
-```
-
-## Marker score heatmap
-
-```{python}
-#| label: heatmap-scores-wr-joyal
-mean_scores = score_df.groupby(ranked_key, observed=True)[score_keys].mean()
-mean_scores.columns = [cell_type.replace("_", " ") for cell_type in retina_markers]
-
-# the same matrix three ways, because they answer different questions: the raw means show
-# magnitude, scaling down a column asks "which cluster is most this cell type", and scaling
-# across a row asks "which cell type best fits this cluster" — the annotation question
-scaled_by_type = (mean_scores - mean_scores.min()) / (mean_scores.max() - mean_scores.min())
-row_range = mean_scores.max(axis=1) - mean_scores.min(axis=1)
-scaled_by_cluster = mean_scores.sub(mean_scores.min(axis=1), axis=0).div(row_range, axis=0)
-
-score_normalizations = {
-    "Mean score": mean_scores,
-    "Scaled per cell type": scaled_by_type,
-    "Scaled per cluster": scaled_by_cluster,
-}
-
-# walk the clusters in order and take each one's best cell type; a type already placed is
-# skipped, and any type no cluster leads with is appended. The matches then read as a
-# diagonal rather than being scattered across the panel.
-column_order = []
-for cluster in scaled_by_cluster.index:
-    best = scaled_by_cluster.loc[cluster].idxmax()
-    if best not in column_order:
-        column_order.append(best)
-column_order += [c for c in scaled_by_cluster.columns if c not in column_order]
-
-fig, axes = plt.subplots(1, len(score_normalizations), squeeze=False, figsize=(9, 4.3),
+fig, axes = plt.subplots(1, len(cell_correlation_panels), squeeze=False, figsize=(9, 4.3),
                          constrained_layout=True)
-for ax, (title, matrix) in zip(axes.flat, score_normalizations.items()):
-    # as on the reference heatmap: left at "auto" the labels thin to every other one across
-    # three panels, which leaves half the cell types and half the clusters unnamed
-    sns.heatmap(matrix[column_order], cmap="viridis", linewidths=0.5, linecolor="white",
+for ax, (title, matrix) in zip(axes.flat, cell_correlation_panels.items()):
+    sns.heatmap(matrix[cell_class_order], cmap="viridis", linewidths=0.5, linecolor="white",
                 xticklabels=True, yticklabels=True,
                 cbar_kws={"shrink": 0.6, "pad": 0.02}, ax=ax)
     ax.set_title(title, fontsize=9)
-    ax.set_xlabel("Cell type", fontsize=8)
+    ax.set_xlabel("Reference class", fontsize=8)
     ax.set_ylabel("Cluster", fontsize=8)
     ax.tick_params(axis="x", labelrotation=45, labelsize=7)
     ax.tick_params(axis="y", labelrotation=0, labelsize=7)
     for label in ax.get_xticklabels():
         label.set_ha("right")
+
+plt.show()
+plt.close(fig)
+```
+
+## Per-cell correlation on the UMAP
+
+The same standardized correlations, one panel per reference class. A class with a population
+in this batch lights up somewhere; a class without one has nowhere bright to sit.
+
+```{python}
+#| label: umap-cell-correlation-wr-joyal
+# one colour scale across all twelve panels, which the marker scores could never have: those
+# were each centred on their own control set, so a bright panel meant a bright gene list. A
+# standardized correlation is the same quantity in every panel, so the panels are comparable.
+umap_coords = wr_joyal.obsm["X_umap"]
+z_limit = float(np.abs(standardized.to_numpy()).max())
+
+fig, axes = plt.subplots(3, 4, figsize=(9, 5.4), constrained_layout=True)
+for ax, reference_class in zip(axes.flat, standardized.columns):
+    points = ax.scatter(umap_coords[:, 0], umap_coords[:, 1], s=1, linewidths=0,
+                        c=standardized[reference_class].to_numpy(), cmap="viridis",
+                        vmin=-z_limit, vmax=z_limit)
+    ax.set_title(reference_class, fontsize=9)
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+for empty_ax in axes.flat[len(standardized.columns):]:
+    empty_ax.axis("off")
+
+colorbar = fig.colorbar(points, ax=axes, location="right", shrink=0.4, pad=0.02, aspect=25)
+colorbar.set_label("z within cell", fontsize=8)
+colorbar.ax.tick_params(labelsize=7)
 
 plt.show()
 plt.close(fig)
@@ -697,7 +632,6 @@ plt.close(fig)
 # as an independent read on the same question — where the two disagree, the disagreement is
 # the thing to look at before writing an override.
 cluster_calls = reference_correlation.idxmax(axis=1)
-marker_calls = mean_scores.idxmax(axis=1)
 
 # no calls made by hand yet, so every cluster below is the reference argmax
 cluster_call_overrides = {}
@@ -721,7 +655,6 @@ pd.DataFrame({
     "cells": wr_joyal.obs[ranked_key].value_counts(),
     "correlation": reference_correlation.max(axis=1).round(3),
     "margin": (sorted_correlation[:, -1] - sorted_correlation[:, -2]).round(3),
-    "marker call": marker_calls,
 })
 ```
 
@@ -758,6 +691,9 @@ for cluster in cell_composition.index:
         "cluster": cluster,
         "call": cluster_calls[cluster],
         "cells": int(in_cluster.sum()),
+        # the share held by the cluster's commonest per-cell call. A cluster near 1.0 is one
+        # cell type and needs nothing; the low ones are where to look.
+        "purity": round(counts.max() / counts.sum(), 2),
         "populations": ", ".join(f"{name} {n}" for name, n in populations.items()),
         "refined": bool(len(populations) > 1 or populations.index[0] != cluster_calls[cluster]),
     })
@@ -776,30 +712,28 @@ wr_joyal.uns["cell_type_colors"] = [
 ]
 ```
 
-## Cluster composition by cell
+## Per-cell correlation by cell type
+
+The same correlations grouped by the calls the refinement settled on. A diagonal here is the
+check that the refinement worked: each cell type should correlate best with its own class.
 
 ```{python}
-#| label: refine-scatter-wr-joyal
-# every cluster's per-cell composition as one bar. A cluster that is one cell type is a single
-# block; a mixed one is divided, and the dashed line is the share a class has to clear to be
-# treated as a population rather than as dropout.
-shares = cell_composition.div(cell_composition.sum(axis=1), axis=0)
-shares = shares.loc[:, shares.max() > 0.01]
+#| label: heatmap-cells-by-type-wr-joyal
+# the same standardized correlations, grouped by the call the refinement settled on rather
+# than by cluster. A diagonal is the check that it worked.
+mean_by_type = standardized.groupby(wr_joyal.obs["cell_type"], observed=True).mean()
 
-fig, ax = plt.subplots(figsize=(9, 4.3), constrained_layout=True)
-left = np.zeros(len(shares))
-for population in shares.columns:
-    ax.barh(shares.index.astype(str), shares[population], left=left,
-            color=cell_type_palette[population], label=population, height=0.8)
-    left += shares[population].to_numpy()
-
-ax.axvline(min_share, color="#404040", linewidth=1.0, linestyle="--", zorder=3)
-ax.set_xlabel("Share of the cluster's cells", fontsize=9)
-ax.set_ylabel("Cluster", fontsize=9)
-ax.set_xlim(0, 1)
-ax.invert_yaxis()
-ax.tick_params(labelsize=8)
-ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
+fig, ax = plt.subplots(figsize=(6.5, 4.3), constrained_layout=True)
+sns.heatmap(mean_by_type, cmap="viridis", linewidths=0.5, linecolor="white",
+            xticklabels=True, yticklabels=True, center=0,
+            cbar_kws={"shrink": 0.6, "pad": 0.02, "label": "mean z"}, ax=ax)
+ax.set_xlabel("Reference class", fontsize=8)
+ax.set_ylabel("Called cell type", fontsize=8)
+ax.tick_params(axis="x", labelrotation=45, labelsize=7)
+ax.tick_params(axis="y", labelrotation=0, labelsize=7)
+ax.figure.axes[-1].yaxis.label.set_size(8)
+for label in ax.get_xticklabels():
+    label.set_ha("right")
 
 plt.show()
 plt.close(fig)
@@ -1214,13 +1148,13 @@ plt.close(fig)
 
 ```{python}
 #| label: correlate-reference-cd73ft-joyal
-# correlated over the query's variable genes rather than everything shared: the
-# housekeeping bulk is near-identical in every class and only lifts all twelve correlations
-# together, flattening the differences the call is made on
-feature_genes = [
-    gene for gene in cd73ft_joyal.var_names[cd73ft_joyal.var["highly_variable"]]
-    if gene in reference_centroids.var_names
-]
+# every gene the two share, matching the per-cell correlation below. Restricting to variable
+# genes was tried and does what its own rationale claims — the housekeeping bulk lifts all
+# twelve correlations together, so dropping it widens the mean margin from 0.061 to 0.080.
+# It also loses the astrocyte cluster: on variable genes cluster 9 is called MG by 0.028, and
+# on all of them it is Astrocyte, which is what its Pax2, Gfap and Rlbp1 say it is. Wider
+# margins mean the classes look more separable, not that the call is more often right.
+feature_genes = [gene for gene in cd73ft_joyal.var_names if gene in reference_centroids.var_names]
 
 cluster_profiles = pd.DataFrame(
     [
@@ -1249,8 +1183,7 @@ reference_correlation = pd.DataFrame(
     columns=reference_profiles.index,
 )
 
-print(f"{len(feature_genes)} of {int(cd73ft_joyal.var['highly_variable'].sum())} "
-      f"variable genes found in the reference")
+print(f"{len(feature_genes):,} of {cd73ft_joyal.n_vars:,} genes shared with the reference")
 reference_correlation.round(3)
 ```
 
@@ -1333,12 +1266,16 @@ ranked_classes = pd.DataFrame(
 # Spearman again, written out rather than looped so all twelve classes come out of one product
 ranked_cells = ranked_cells - ranked_cells.mean(axis=1, keepdims=True)
 ranked_classes = ranked_classes - ranked_classes.mean(axis=1, keepdims=True)
-cell_correlation = (ranked_cells @ ranked_classes.T) / np.sqrt(
-    (ranked_cells ** 2).sum(axis=1)[:, None] * (ranked_classes ** 2).sum(axis=1)[None, :]
+cell_correlation = pd.DataFrame(
+    (ranked_cells @ ranked_classes.T) / np.sqrt(
+        (ranked_cells ** 2).sum(axis=1)[:, None] * (ranked_classes ** 2).sum(axis=1)[None, :]
+    ),
+    index=cd73ft_joyal.obs_names,
+    columns=reference_centroids.obs_names,
 )
 
 cd73ft_joyal.obs["cell_call"] = pd.Categorical(
-    reference_centroids.obs_names[cell_correlation.argmax(axis=1)],
+    cell_correlation.idxmax(axis=1),
     categories=sorted(reference_centroids.obs_names),
 )
 
@@ -1347,167 +1284,99 @@ cell_composition = pd.crosstab(cd73ft_joyal.obs[ranked_key], cd73ft_joyal.obs["c
  .div(cell_composition.sum(axis=1), axis=0).mul(100).round().astype(int))
 ```
 
-## Marker scores
+## Per-cell correlation by cluster
+
+The per-cell correlations averaged over each cluster, shown the same three ways as the
+centroid heatmap. Where a cluster holds one cell type it has one bright class; where it holds
+two, the brightness is shared.
 
 ```{python}
-#| label: score-markers-cd73ft-joyal
-retina_markers = {
-    "Rods": ["Rho", "Pde6b", "Nrl", "Nr2e3"],
-    "Cones": ["Opn1mw", "Opn1sw", "Arr3", "Thrb"],
-    "RGC": ["Rbpms", "Sncg", "Pou4f1", "Pou4f2"],
-    "Amacrine": ["Tfap2a", "Tfap2b", "Chat", "Vsx1"],
-    "Bipolar": ["Vsx2", "Isl1", "Prkca", "Cabp5"],
-    "Horizontal": ["Onecut1", "Onecut2", "Lhx1", "Prox1"],
-    "Muller_Glia": ["Rlbp1", "Glul", "Sox9", "Slc1a3"],
-    "Microglia": ["Cx3cr1", "P2ry12", "Tmem119", "Aif1"],
-    "Vascular_Endothelial": ["Cdh5", "Pecam1", "Tek"],
-    "Pericytes": ["Pdgfrb", "Acta2", "Des"],
-    "Astrocytes": ["Gfap", "Aldh1l1", "Aqp4"],
+#| label: heatmap-cells-by-cluster-cd73ft-joyal
+# the same matrix three ways, matching the centroid heatmap above so the two can be read
+# against each other.
+#
+# standardized within each cell before averaging, which matters more than it looks. A cell's
+# correlation to every class rises with how many genes it captured: across these clusters the
+# mean gene count and the mean correlation to all twelve classes correlate at 0.96. Averaging
+# the raw numbers therefore draws a map of sequencing depth, on which the deepest clusters look
+# well matched to everything. Subtracting each cell's own mean and dividing by its own spread
+# leaves only which classes that cell preferred, which is the question.
+standardized = cell_correlation.sub(cell_correlation.mean(axis=1), axis=0).div(
+    cell_correlation.std(axis=1), axis=0
+)
+mean_cell_correlation = standardized.groupby(cd73ft_joyal.obs[ranked_key], observed=True).mean()
+
+cell_class_range = mean_cell_correlation.max(axis=0) - mean_cell_correlation.min(axis=0)
+cell_scaled_by_class = mean_cell_correlation.sub(
+    mean_cell_correlation.min(axis=0), axis=1
+).div(cell_class_range, axis=1)
+
+cell_cluster_range = mean_cell_correlation.max(axis=1) - mean_cell_correlation.min(axis=1)
+cell_scaled_by_cluster = mean_cell_correlation.sub(
+    mean_cell_correlation.min(axis=1), axis=0
+).div(cell_cluster_range, axis=0)
+
+cell_correlation_panels = {
+    "Mean per-cell z": mean_cell_correlation,
+    "Scaled per class": cell_scaled_by_class,
+    "Scaled per cluster": cell_scaled_by_cluster,
 }
 
-score_keys = []
-markers_present = {}
-for cell_type, genes in retina_markers.items():
-    present = [gene.upper() for gene in genes if gene.upper() in cd73ft_joyal.var_names]
-    score_key = f"score_{cell_type}"
-    sc.tl.score_genes(cd73ft_joyal, gene_list=present, score_name=score_key)
-    score_keys.append(score_key)
-    markers_present[cell_type] = present
-    print(f"{cell_type}: {len(present)}/{len(genes)} markers")
-```
+# the diagonal ordering the centroid heatmap uses, derived the same way
+cell_class_order = []
+for cluster in cell_scaled_by_cluster.index:
+    best = cell_scaled_by_cluster.loc[cluster].idxmax()
+    if best not in cell_class_order:
+        cell_class_order.append(best)
+cell_class_order += [n for n in cell_scaled_by_cluster.columns if n not in cell_class_order]
 
-## Marker scores by cluster
-
-```{python}
-#| label: score-violin-by-cluster-cd73ft-joyal
-score_df = sc.get.obs_df(cd73ft_joyal, keys=[ranked_key] + score_keys)
-
-for start in range(0, len(score_keys), 6):
-    group = score_keys[start:start + 6]
-    group_types = list(retina_markers)[start:start + 6]
-
-    fig, axes = plt.subplots(len(group), 1, squeeze=False, sharex=True, figsize=(9, 4.3),
-                             constrained_layout=True)
-    for ax, score_key, cell_type in zip(axes.flat, group, group_types):
-        sns.violinplot(data=score_df, x=ranked_key, y=score_key, hue=ranked_key,
-                       palette=cluster_palette, legend=False, dodge=False, cut=0,
-                       density_norm="width", inner="box", inner_kws=violin_inner_kws,
-                       linewidth=0.5, saturation=1, ax=ax)
-
-        cluster_order = list(cd73ft_joyal.obs[ranked_key].cat.categories)
-        for body in ax.collections:
-            extents = body.get_paths()[0].get_extents()
-            body.set_facecolor(cluster_palette[cluster_order[round((extents.x0 + extents.x1) / 2)]])
-
-        ax.set_ylabel(f"{cell_type.replace('_', ' ')} score", fontsize=7)
-        ax.set_xlabel("")
-        ax.tick_params(axis="y", labelsize=6)
-        ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
-        ax.set_axisbelow(True)
-
-    axes[-1][0].set_xlabel("Cluster", fontsize=9)
-    axes[-1][0].tick_params(axis="x", labelsize=8)
-    plt.show()
-    plt.close(fig)
-```
-
-## Marker scores on the UMAP
-
-```{python}
-#| label: umap-scores-cd73ft-joyal
-for start in range(0, len(score_keys), 3):
-    group = score_keys[start:start + 3]
-
-    fig, axs = plt.subplots(2, 3, height_ratios=[1, 0.22], figsize=(8.6, 3.4),
-                            constrained_layout=True)
-    for ax, bar_ax, score_key in zip(axs[0], axs[1], group):
-        sc.pl.umap(
-            cd73ft_joyal,
-            color=score_key,
-            ax=ax,
-            frameon=True,
-            colorbar_loc=None,
-            show=False,
-        )
-        ax.set_aspect("equal", adjustable="datalim")
-
-        # the strip reserves the space; the colorbar drawn inside it is excluded from the
-        # layout so its tick labels cannot push the panel around
-        bar_ax.axis("off")
-        colorbar_ax = bar_ax.inset_axes([0.325, 0.82, 0.35, 0.18])
-        colorbar_ax.set_in_layout(False)
-        colorbar = fig.colorbar(ax.collections[0], cax=colorbar_ax, orientation="horizontal")
-
-        # placed explicitly at the ends and middle: the automatic locator picks its own round
-        # numbers per score, so the tick count and positions differ from panel to panel
-        score_low, score_high = ax.collections[0].get_clim()
-        colorbar_ticks = np.linspace(score_low, score_high, 3)
-        colorbar.set_ticks(colorbar_ticks, labels=[f"{tick:.2f}" for tick in colorbar_ticks])
-        colorbar.ax.tick_params(labelsize=7)
-
-    for empty_ax in axs[0][len(group):]:
-        fig.delaxes(empty_ax)
-    for empty_bar_ax in axs[1][len(group):]:
-        empty_bar_ax.axis("off")
-
-    plt.show()
-    plt.close(fig)
-```
-
-## Marker genes by cluster
-
-```{python}
-#| label: dotplot-markers-cd73ft-joyal
-# figsize is deliberately not passed: dotplot derives its own from the gene and cluster counts,
-# and forcing it to slide dimensions packs 41 genes across 21 clusters until the dots overlap
-sc.pl.dotplot(cd73ft_joyal, markers_present, groupby=ranked_key, standard_scale="var")
-```
-
-## Marker score heatmap
-
-```{python}
-#| label: heatmap-scores-cd73ft-joyal
-mean_scores = score_df.groupby(ranked_key, observed=True)[score_keys].mean()
-mean_scores.columns = [cell_type.replace("_", " ") for cell_type in retina_markers]
-
-# the same matrix three ways, because they answer different questions: the raw means show
-# magnitude, scaling down a column asks "which cluster is most this cell type", and scaling
-# across a row asks "which cell type best fits this cluster" — the annotation question
-scaled_by_type = (mean_scores - mean_scores.min()) / (mean_scores.max() - mean_scores.min())
-row_range = mean_scores.max(axis=1) - mean_scores.min(axis=1)
-scaled_by_cluster = mean_scores.sub(mean_scores.min(axis=1), axis=0).div(row_range, axis=0)
-
-score_normalizations = {
-    "Mean score": mean_scores,
-    "Scaled per cell type": scaled_by_type,
-    "Scaled per cluster": scaled_by_cluster,
-}
-
-# walk the clusters in order and take each one's best cell type; a type already placed is
-# skipped, and any type no cluster leads with is appended. The matches then read as a
-# diagonal rather than being scattered across the panel.
-column_order = []
-for cluster in scaled_by_cluster.index:
-    best = scaled_by_cluster.loc[cluster].idxmax()
-    if best not in column_order:
-        column_order.append(best)
-column_order += [c for c in scaled_by_cluster.columns if c not in column_order]
-
-fig, axes = plt.subplots(1, len(score_normalizations), squeeze=False, figsize=(9, 4.3),
+fig, axes = plt.subplots(1, len(cell_correlation_panels), squeeze=False, figsize=(9, 4.3),
                          constrained_layout=True)
-for ax, (title, matrix) in zip(axes.flat, score_normalizations.items()):
-    # as on the reference heatmap: left at "auto" the labels thin to every other one across
-    # three panels, which leaves half the cell types and half the clusters unnamed
-    sns.heatmap(matrix[column_order], cmap="viridis", linewidths=0.5, linecolor="white",
+for ax, (title, matrix) in zip(axes.flat, cell_correlation_panels.items()):
+    sns.heatmap(matrix[cell_class_order], cmap="viridis", linewidths=0.5, linecolor="white",
                 xticklabels=True, yticklabels=True,
                 cbar_kws={"shrink": 0.6, "pad": 0.02}, ax=ax)
     ax.set_title(title, fontsize=9)
-    ax.set_xlabel("Cell type", fontsize=8)
+    ax.set_xlabel("Reference class", fontsize=8)
     ax.set_ylabel("Cluster", fontsize=8)
     ax.tick_params(axis="x", labelrotation=45, labelsize=7)
     ax.tick_params(axis="y", labelrotation=0, labelsize=7)
     for label in ax.get_xticklabels():
         label.set_ha("right")
+
+plt.show()
+plt.close(fig)
+```
+
+## Per-cell correlation on the UMAP
+
+The same standardized correlations, one panel per reference class. A class with a population
+in this batch lights up somewhere; a class without one has nowhere bright to sit.
+
+```{python}
+#| label: umap-cell-correlation-cd73ft-joyal
+# one colour scale across all twelve panels, which the marker scores could never have: those
+# were each centred on their own control set, so a bright panel meant a bright gene list. A
+# standardized correlation is the same quantity in every panel, so the panels are comparable.
+umap_coords = cd73ft_joyal.obsm["X_umap"]
+z_limit = float(np.abs(standardized.to_numpy()).max())
+
+fig, axes = plt.subplots(3, 4, figsize=(9, 5.4), constrained_layout=True)
+for ax, reference_class in zip(axes.flat, standardized.columns):
+    points = ax.scatter(umap_coords[:, 0], umap_coords[:, 1], s=1, linewidths=0,
+                        c=standardized[reference_class].to_numpy(), cmap="viridis",
+                        vmin=-z_limit, vmax=z_limit)
+    ax.set_title(reference_class, fontsize=9)
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+for empty_ax in axes.flat[len(standardized.columns):]:
+    empty_ax.axis("off")
+
+colorbar = fig.colorbar(points, ax=axes, location="right", shrink=0.4, pad=0.02, aspect=25)
+colorbar.set_label("z within cell", fontsize=8)
+colorbar.ax.tick_params(labelsize=7)
 
 plt.show()
 plt.close(fig)
@@ -1521,7 +1390,6 @@ plt.close(fig)
 # as an independent read on the same question — where the two disagree, the disagreement is
 # the thing to look at before writing an override.
 cluster_calls = reference_correlation.idxmax(axis=1)
-marker_calls = mean_scores.idxmax(axis=1)
 
 # no calls made by hand yet, so every cluster below is the reference argmax
 cluster_call_overrides = {}
@@ -1545,7 +1413,6 @@ pd.DataFrame({
     "cells": cd73ft_joyal.obs[ranked_key].value_counts(),
     "correlation": reference_correlation.max(axis=1).round(3),
     "margin": (sorted_correlation[:, -1] - sorted_correlation[:, -2]).round(3),
-    "marker call": marker_calls,
 })
 ```
 
@@ -1582,6 +1449,9 @@ for cluster in cell_composition.index:
         "cluster": cluster,
         "call": cluster_calls[cluster],
         "cells": int(in_cluster.sum()),
+        # the share held by the cluster's commonest per-cell call. A cluster near 1.0 is one
+        # cell type and needs nothing; the low ones are where to look.
+        "purity": round(counts.max() / counts.sum(), 2),
         "populations": ", ".join(f"{name} {n}" for name, n in populations.items()),
         "refined": bool(len(populations) > 1 or populations.index[0] != cluster_calls[cluster]),
     })
@@ -1600,30 +1470,28 @@ cd73ft_joyal.uns["cell_type_colors"] = [
 ]
 ```
 
-## Cluster composition by cell
+## Per-cell correlation by cell type
+
+The same correlations grouped by the calls the refinement settled on. A diagonal here is the
+check that the refinement worked: each cell type should correlate best with its own class.
 
 ```{python}
-#| label: refine-scatter-cd73ft-joyal
-# every cluster's per-cell composition as one bar. A cluster that is one cell type is a single
-# block; a mixed one is divided, and the dashed line is the share a class has to clear to be
-# treated as a population rather than as dropout.
-shares = cell_composition.div(cell_composition.sum(axis=1), axis=0)
-shares = shares.loc[:, shares.max() > 0.01]
+#| label: heatmap-cells-by-type-cd73ft-joyal
+# the same standardized correlations, grouped by the call the refinement settled on rather
+# than by cluster. A diagonal is the check that it worked.
+mean_by_type = standardized.groupby(cd73ft_joyal.obs["cell_type"], observed=True).mean()
 
-fig, ax = plt.subplots(figsize=(9, 4.3), constrained_layout=True)
-left = np.zeros(len(shares))
-for population in shares.columns:
-    ax.barh(shares.index.astype(str), shares[population], left=left,
-            color=cell_type_palette[population], label=population, height=0.8)
-    left += shares[population].to_numpy()
-
-ax.axvline(min_share, color="#404040", linewidth=1.0, linestyle="--", zorder=3)
-ax.set_xlabel("Share of the cluster's cells", fontsize=9)
-ax.set_ylabel("Cluster", fontsize=9)
-ax.set_xlim(0, 1)
-ax.invert_yaxis()
-ax.tick_params(labelsize=8)
-ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
+fig, ax = plt.subplots(figsize=(6.5, 4.3), constrained_layout=True)
+sns.heatmap(mean_by_type, cmap="viridis", linewidths=0.5, linecolor="white",
+            xticklabels=True, yticklabels=True, center=0,
+            cbar_kws={"shrink": 0.6, "pad": 0.02, "label": "mean z"}, ax=ax)
+ax.set_xlabel("Reference class", fontsize=8)
+ax.set_ylabel("Called cell type", fontsize=8)
+ax.tick_params(axis="x", labelrotation=45, labelsize=7)
+ax.tick_params(axis="y", labelrotation=0, labelsize=7)
+ax.figure.axes[-1].yaxis.label.set_size(8)
+for label in ax.get_xticklabels():
+    label.set_ha("right")
 
 plt.show()
 plt.close(fig)

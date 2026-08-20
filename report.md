@@ -408,13 +408,13 @@ id="qc-violin-by-cluster-wr-joyal" />
 ## Correlation with the reference
 
 ``` python
-# correlated over the query's variable genes rather than everything shared: the
-# housekeeping bulk is near-identical in every class and only lifts all twelve correlations
-# together, flattening the differences the call is made on
-feature_genes = [
-    gene for gene in wr_joyal.var_names[wr_joyal.var["highly_variable"]]
-    if gene in reference_centroids.var_names
-]
+# every gene the two share, matching the per-cell correlation below. Restricting to variable
+# genes was tried and does what its own rationale claims — the housekeeping bulk lifts all
+# twelve correlations together, so dropping it widens the mean margin from 0.061 to 0.080.
+# It also loses the astrocyte cluster: on variable genes cluster 9 is called MG by 0.028, and
+# on all of them it is Astrocyte, which is what its Pax2, Gfap and Rlbp1 say it is. Wider
+# margins mean the classes look more separable, not that the call is more often right.
+feature_genes = [gene for gene in wr_joyal.var_names if gene in reference_centroids.var_names]
 
 cluster_profiles = pd.DataFrame(
     [
@@ -443,12 +443,11 @@ reference_correlation = pd.DataFrame(
     columns=reference_profiles.index,
 )
 
-print(f"{len(feature_genes)} of {int(wr_joyal.var['highly_variable'].sum())} "
-      f"variable genes found in the reference")
+print(f"{len(feature_genes):,} of {wr_joyal.n_vars:,} genes shared with the reference")
 reference_correlation.round(3)
 ```
 
-    1618 of 2000 variable genes found in the reference
+    16,155 of 19,084 genes shared with the reference
 
 <div>
 <style scoped>
@@ -465,18 +464,18 @@ reference_correlation.round(3)
 
 |  | AC | Astrocyte | BC | Cone | Endothelial | HC | MG | Microglia | Pericyte | RGC | RPE | Rod |
 |----|----|----|----|----|----|----|----|----|----|----|----|----|
-| 1 | 0.626 | 0.584 | 0.677 | 0.798 | 0.464 | 0.630 | 0.656 | 0.473 | 0.500 | 0.589 | 0.617 | 0.861 |
-| 2 | 0.742 | 0.648 | 0.814 | 0.730 | 0.538 | 0.702 | 0.727 | 0.526 | 0.586 | 0.685 | 0.600 | 0.729 |
-| 3 | 0.842 | 0.645 | 0.719 | 0.658 | 0.515 | 0.707 | 0.703 | 0.513 | 0.572 | 0.739 | 0.564 | 0.668 |
-| 4 | 0.703 | 0.641 | 0.777 | 0.732 | 0.540 | 0.685 | 0.715 | 0.552 | 0.580 | 0.654 | 0.606 | 0.738 |
-| 5 | 0.635 | 0.749 | 0.614 | 0.562 | 0.607 | 0.596 | 0.865 | 0.560 | 0.620 | 0.578 | 0.612 | 0.583 |
-| 6 | 0.624 | 0.561 | 0.681 | 0.832 | 0.452 | 0.639 | 0.638 | 0.471 | 0.499 | 0.591 | 0.614 | 0.795 |
-| 7 | 0.776 | 0.616 | 0.690 | 0.638 | 0.497 | 0.701 | 0.669 | 0.522 | 0.541 | 0.716 | 0.541 | 0.644 |
-| 8 | 0.715 | 0.590 | 0.633 | 0.605 | 0.463 | 0.671 | 0.641 | 0.498 | 0.504 | 0.764 | 0.505 | 0.609 |
-| 9 | 0.528 | 0.727 | 0.493 | 0.440 | 0.616 | 0.484 | 0.755 | 0.505 | 0.623 | 0.479 | 0.645 | 0.469 |
-| 10 | 0.435 | 0.547 | 0.430 | 0.392 | 0.760 | 0.414 | 0.554 | 0.497 | 0.720 | 0.404 | 0.462 | 0.384 |
-| 11 | 0.641 | 0.552 | 0.633 | 0.607 | 0.471 | 0.752 | 0.615 | 0.485 | 0.523 | 0.627 | 0.531 | 0.602 |
-| 12 | 0.359 | 0.540 | 0.375 | 0.375 | 0.510 | 0.373 | 0.443 | 0.778 | 0.442 | 0.364 | 0.410 | 0.378 |
+| 1 | 0.759 | 0.716 | 0.810 | 0.869 | 0.657 | 0.778 | 0.746 | 0.665 | 0.691 | 0.741 | 0.742 | 0.914 |
+| 2 | 0.828 | 0.722 | 0.902 | 0.823 | 0.645 | 0.818 | 0.752 | 0.654 | 0.694 | 0.806 | 0.717 | 0.818 |
+| 3 | 0.903 | 0.730 | 0.834 | 0.770 | 0.629 | 0.842 | 0.743 | 0.644 | 0.682 | 0.864 | 0.689 | 0.779 |
+| 4 | 0.796 | 0.708 | 0.882 | 0.822 | 0.641 | 0.806 | 0.742 | 0.654 | 0.688 | 0.777 | 0.715 | 0.819 |
+| 5 | 0.719 | 0.831 | 0.726 | 0.711 | 0.721 | 0.732 | 0.904 | 0.695 | 0.747 | 0.706 | 0.762 | 0.725 |
+| 6 | 0.738 | 0.693 | 0.801 | 0.900 | 0.633 | 0.766 | 0.719 | 0.647 | 0.666 | 0.725 | 0.730 | 0.860 |
+| 7 | 0.877 | 0.709 | 0.805 | 0.752 | 0.615 | 0.821 | 0.717 | 0.640 | 0.662 | 0.845 | 0.676 | 0.759 |
+| 8 | 0.841 | 0.700 | 0.780 | 0.724 | 0.604 | 0.812 | 0.704 | 0.630 | 0.649 | 0.894 | 0.660 | 0.735 |
+| 9 | 0.664 | 0.832 | 0.663 | 0.654 | 0.718 | 0.677 | 0.817 | 0.672 | 0.739 | 0.655 | 0.773 | 0.664 |
+| 10 | 0.570 | 0.687 | 0.586 | 0.600 | 0.831 | 0.599 | 0.674 | 0.684 | 0.806 | 0.575 | 0.664 | 0.611 |
+| 11 | 0.787 | 0.699 | 0.776 | 0.748 | 0.624 | 0.890 | 0.707 | 0.644 | 0.665 | 0.786 | 0.691 | 0.752 |
+| 12 | 0.541 | 0.648 | 0.568 | 0.597 | 0.663 | 0.583 | 0.612 | 0.837 | 0.639 | 0.544 | 0.622 | 0.612 |
 
 </div>
 
@@ -562,12 +561,16 @@ ranked_classes = pd.DataFrame(
 # Spearman again, written out rather than looped so all twelve classes come out of one product
 ranked_cells = ranked_cells - ranked_cells.mean(axis=1, keepdims=True)
 ranked_classes = ranked_classes - ranked_classes.mean(axis=1, keepdims=True)
-cell_correlation = (ranked_cells @ ranked_classes.T) / np.sqrt(
-    (ranked_cells ** 2).sum(axis=1)[:, None] * (ranked_classes ** 2).sum(axis=1)[None, :]
+cell_correlation = pd.DataFrame(
+    (ranked_cells @ ranked_classes.T) / np.sqrt(
+        (ranked_cells ** 2).sum(axis=1)[:, None] * (ranked_classes ** 2).sum(axis=1)[None, :]
+    ),
+    index=wr_joyal.obs_names,
+    columns=reference_centroids.obs_names,
 )
 
 wr_joyal.obs["cell_call"] = pd.Categorical(
-    reference_centroids.obs_names[cell_correlation.argmax(axis=1)],
+    cell_correlation.idxmax(axis=1),
     categories=sorted(reference_centroids.obs_names),
 )
 
@@ -607,197 +610,59 @@ cell_composition = pd.crosstab(wr_joyal.obs[ranked_key], wr_joyal.obs["cell_call
 
 </div>
 
-## Marker scores
+## Per-cell correlation by cluster
+
+The per-cell correlations averaged over each cluster, shown the same
+three ways as the centroid heatmap. Where a cluster holds one cell type
+it has one bright class; where it holds two, the brightness is shared.
 
 ``` python
-retina_markers = {
-    "Rods": ["Rho", "Pde6b", "Nrl", "Nr2e3"],
-    "Cones": ["Opn1mw", "Opn1sw", "Arr3", "Thrb"],
-    "RGC": ["Rbpms", "Sncg", "Pou4f1", "Pou4f2"],
-    "Amacrine": ["Tfap2a", "Tfap2b", "Chat", "Vsx1"],
-    "Bipolar": ["Vsx2", "Isl1", "Prkca", "Cabp5"],
-    "Horizontal": ["Onecut1", "Onecut2", "Lhx1", "Prox1"],
-    "Muller_Glia": ["Rlbp1", "Glul", "Sox9", "Slc1a3"],
-    "Microglia": ["Cx3cr1", "P2ry12", "Tmem119", "Aif1"],
-    "Vascular_Endothelial": ["Cdh5", "Pecam1", "Tek"],
-    "Pericytes": ["Pdgfrb", "Acta2", "Des"],
-    "Astrocytes": ["Gfap", "Aldh1l1", "Aqp4"],
+# the same matrix three ways, matching the centroid heatmap above so the two can be read
+# against each other.
+#
+# standardized within each cell before averaging, which matters more than it looks. A cell's
+# correlation to every class rises with how many genes it captured: across these clusters the
+# mean gene count and the mean correlation to all twelve classes correlate at 0.96. Averaging
+# the raw numbers therefore draws a map of sequencing depth, on which the deepest clusters look
+# well matched to everything. Subtracting each cell's own mean and dividing by its own spread
+# leaves only which classes that cell preferred, which is the question.
+standardized = cell_correlation.sub(cell_correlation.mean(axis=1), axis=0).div(
+    cell_correlation.std(axis=1), axis=0
+)
+mean_cell_correlation = standardized.groupby(wr_joyal.obs[ranked_key], observed=True).mean()
+
+cell_class_range = mean_cell_correlation.max(axis=0) - mean_cell_correlation.min(axis=0)
+cell_scaled_by_class = mean_cell_correlation.sub(
+    mean_cell_correlation.min(axis=0), axis=1
+).div(cell_class_range, axis=1)
+
+cell_cluster_range = mean_cell_correlation.max(axis=1) - mean_cell_correlation.min(axis=1)
+cell_scaled_by_cluster = mean_cell_correlation.sub(
+    mean_cell_correlation.min(axis=1), axis=0
+).div(cell_cluster_range, axis=0)
+
+cell_correlation_panels = {
+    "Mean per-cell z": mean_cell_correlation,
+    "Scaled per class": cell_scaled_by_class,
+    "Scaled per cluster": cell_scaled_by_cluster,
 }
 
-score_keys = []
-markers_present = {}
-for cell_type, genes in retina_markers.items():
-    present = [gene.upper() for gene in genes if gene.upper() in wr_joyal.var_names]
-    score_key = f"score_{cell_type}"
-    sc.tl.score_genes(wr_joyal, gene_list=present, score_name=score_key)
-    score_keys.append(score_key)
-    markers_present[cell_type] = present
-    print(f"{cell_type}: {len(present)}/{len(genes)} markers")
-```
+# the diagonal ordering the centroid heatmap uses, derived the same way
+cell_class_order = []
+for cluster in cell_scaled_by_cluster.index:
+    best = cell_scaled_by_cluster.loc[cluster].idxmax()
+    if best not in cell_class_order:
+        cell_class_order.append(best)
+cell_class_order += [n for n in cell_scaled_by_cluster.columns if n not in cell_class_order]
 
-    Rods: 4/4 markers
-    Cones: 4/4 markers
-    RGC: 4/4 markers
-    Amacrine: 4/4 markers
-    Bipolar: 4/4 markers
-    Horizontal: 4/4 markers
-    Muller_Glia: 4/4 markers
-    Microglia: 4/4 markers
-    Vascular_Endothelial: 3/3 markers
-    Pericytes: 3/3 markers
-    Astrocytes: 3/3 markers
-
-## Marker scores by cluster
-
-``` python
-score_df = sc.get.obs_df(wr_joyal, keys=[ranked_key] + score_keys)
-
-for start in range(0, len(score_keys), 6):
-    group = score_keys[start:start + 6]
-    group_types = list(retina_markers)[start:start + 6]
-
-    fig, axes = plt.subplots(len(group), 1, squeeze=False, sharex=True, figsize=(9, 4.3),
-                             constrained_layout=True)
-    for ax, score_key, cell_type in zip(axes.flat, group, group_types):
-        sns.violinplot(data=score_df, x=ranked_key, y=score_key, hue=ranked_key,
-                       palette=cluster_palette, legend=False, dodge=False, cut=0,
-                       density_norm="width", inner="box", inner_kws=violin_inner_kws,
-                       linewidth=0.5, saturation=1, ax=ax)
-
-        cluster_order = list(wr_joyal.obs[ranked_key].cat.categories)
-        for body in ax.collections:
-            extents = body.get_paths()[0].get_extents()
-            body.set_facecolor(cluster_palette[cluster_order[round((extents.x0 + extents.x1) / 2)]])
-
-        ax.set_ylabel(f"{cell_type.replace('_', ' ')} score", fontsize=7)
-        ax.set_xlabel("")
-        ax.tick_params(axis="y", labelsize=6)
-        ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
-        ax.set_axisbelow(True)
-
-    axes[-1][0].set_xlabel("Cluster", fontsize=9)
-    axes[-1][0].tick_params(axis="x", labelsize=8)
-    plt.show()
-    plt.close(fig)
-```
-
-<img
-src="oir_analysis_files/figure-commonmark/score-violin-by-cluster-wr-joyal-output-1.png"
-id="score-violin-by-cluster-wr-joyal-1" />
-
-<img
-src="oir_analysis_files/figure-commonmark/score-violin-by-cluster-wr-joyal-output-2.png"
-id="score-violin-by-cluster-wr-joyal-2" />
-
-## Marker scores on the UMAP
-
-``` python
-for start in range(0, len(score_keys), 3):
-    group = score_keys[start:start + 3]
-
-    fig, axs = plt.subplots(2, 3, height_ratios=[1, 0.22], figsize=(8.6, 3.4),
-                            constrained_layout=True)
-    for ax, bar_ax, score_key in zip(axs[0], axs[1], group):
-        sc.pl.umap(
-            wr_joyal,
-            color=score_key,
-            ax=ax,
-            frameon=True,
-            colorbar_loc=None,
-            show=False,
-        )
-        ax.set_aspect("equal", adjustable="datalim")
-
-        # the strip reserves the space; the colorbar drawn inside it is excluded from the
-        # layout so its tick labels cannot push the panel around
-        bar_ax.axis("off")
-        colorbar_ax = bar_ax.inset_axes([0.325, 0.82, 0.35, 0.18])
-        colorbar_ax.set_in_layout(False)
-        colorbar = fig.colorbar(ax.collections[0], cax=colorbar_ax, orientation="horizontal")
-
-        # placed explicitly at the ends and middle: the automatic locator picks its own round
-        # numbers per score, so the tick count and positions differ from panel to panel
-        score_low, score_high = ax.collections[0].get_clim()
-        colorbar_ticks = np.linspace(score_low, score_high, 3)
-        colorbar.set_ticks(colorbar_ticks, labels=[f"{tick:.2f}" for tick in colorbar_ticks])
-        colorbar.ax.tick_params(labelsize=7)
-
-    for empty_ax in axs[0][len(group):]:
-        fig.delaxes(empty_ax)
-    for empty_bar_ax in axs[1][len(group):]:
-        empty_bar_ax.axis("off")
-
-    plt.show()
-    plt.close(fig)
-```
-
-<img
-src="oir_analysis_files/figure-commonmark/umap-scores-wr-joyal-output-1.png"
-id="umap-scores-wr-joyal-1" />
-
-<img
-src="oir_analysis_files/figure-commonmark/umap-scores-wr-joyal-output-2.png"
-id="umap-scores-wr-joyal-2" />
-
-<img
-src="oir_analysis_files/figure-commonmark/umap-scores-wr-joyal-output-3.png"
-id="umap-scores-wr-joyal-3" />
-
-<img
-src="oir_analysis_files/figure-commonmark/umap-scores-wr-joyal-output-4.png"
-id="umap-scores-wr-joyal-4" />
-
-## Marker genes by cluster
-
-``` python
-# figsize is deliberately not passed: dotplot derives its own from the gene and cluster counts,
-# and forcing it to slide dimensions packs 41 genes across 21 clusters until the dots overlap
-sc.pl.dotplot(wr_joyal, markers_present, groupby=ranked_key, standard_scale="var")
-```
-
-<img
-src="oir_analysis_files/figure-commonmark/dotplot-markers-wr-joyal-output-1.png"
-id="dotplot-markers-wr-joyal" />
-
-## Marker score heatmap
-
-``` python
-mean_scores = score_df.groupby(ranked_key, observed=True)[score_keys].mean()
-mean_scores.columns = [cell_type.replace("_", " ") for cell_type in retina_markers]
-
-# the same matrix three ways, because they answer different questions: the raw means show
-# magnitude, scaling down a column asks "which cluster is most this cell type", and scaling
-# across a row asks "which cell type best fits this cluster" — the annotation question
-scaled_by_type = (mean_scores - mean_scores.min()) / (mean_scores.max() - mean_scores.min())
-row_range = mean_scores.max(axis=1) - mean_scores.min(axis=1)
-scaled_by_cluster = mean_scores.sub(mean_scores.min(axis=1), axis=0).div(row_range, axis=0)
-
-score_normalizations = {
-    "Mean score": mean_scores,
-    "Scaled per cell type": scaled_by_type,
-    "Scaled per cluster": scaled_by_cluster,
-}
-
-# walk the clusters in order and take each one's best cell type; a type already placed is
-# skipped, and any type no cluster leads with is appended. The matches then read as a
-# diagonal rather than being scattered across the panel.
-column_order = []
-for cluster in scaled_by_cluster.index:
-    best = scaled_by_cluster.loc[cluster].idxmax()
-    if best not in column_order:
-        column_order.append(best)
-column_order += [c for c in scaled_by_cluster.columns if c not in column_order]
-
-fig, axes = plt.subplots(1, len(score_normalizations), squeeze=False, figsize=(9, 4.3),
+fig, axes = plt.subplots(1, len(cell_correlation_panels), squeeze=False, figsize=(9, 4.3),
                          constrained_layout=True)
-for ax, (title, matrix) in zip(axes.flat, score_normalizations.items()):
-    # as on the reference heatmap: left at "auto" the labels thin to every other one across
-    # three panels, which leaves half the cell types and half the clusters unnamed
-    sns.heatmap(matrix[column_order], cmap="viridis", linewidths=0.5, linecolor="white",
+for ax, (title, matrix) in zip(axes.flat, cell_correlation_panels.items()):
+    sns.heatmap(matrix[cell_class_order], cmap="viridis", linewidths=0.5, linecolor="white",
                 xticklabels=True, yticklabels=True,
                 cbar_kws={"shrink": 0.6, "pad": 0.02}, ax=ax)
     ax.set_title(title, fontsize=9)
-    ax.set_xlabel("Cell type", fontsize=8)
+    ax.set_xlabel("Reference class", fontsize=8)
     ax.set_ylabel("Cluster", fontsize=8)
     ax.tick_params(axis="x", labelrotation=45, labelsize=7)
     ax.tick_params(axis="y", labelrotation=0, labelsize=7)
@@ -809,8 +674,46 @@ plt.close(fig)
 ```
 
 <img
-src="oir_analysis_files/figure-commonmark/heatmap-scores-wr-joyal-output-1.png"
-id="heatmap-scores-wr-joyal" />
+src="oir_analysis_files/figure-commonmark/heatmap-cells-by-cluster-wr-joyal-output-1.png"
+id="heatmap-cells-by-cluster-wr-joyal" />
+
+## Per-cell correlation on the UMAP
+
+The same standardized correlations, one panel per reference class. A
+class with a population in this batch lights up somewhere; a class
+without one has nowhere bright to sit.
+
+``` python
+# one colour scale across all twelve panels, which the marker scores could never have: those
+# were each centred on their own control set, so a bright panel meant a bright gene list. A
+# standardized correlation is the same quantity in every panel, so the panels are comparable.
+umap_coords = wr_joyal.obsm["X_umap"]
+z_limit = float(np.abs(standardized.to_numpy()).max())
+
+fig, axes = plt.subplots(3, 4, figsize=(9, 5.4), constrained_layout=True)
+for ax, reference_class in zip(axes.flat, standardized.columns):
+    points = ax.scatter(umap_coords[:, 0], umap_coords[:, 1], s=1, linewidths=0,
+                        c=standardized[reference_class].to_numpy(), cmap="viridis",
+                        vmin=-z_limit, vmax=z_limit)
+    ax.set_title(reference_class, fontsize=9)
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+for empty_ax in axes.flat[len(standardized.columns):]:
+    empty_ax.axis("off")
+
+colorbar = fig.colorbar(points, ax=axes, location="right", shrink=0.4, pad=0.02, aspect=25)
+colorbar.set_label("z within cell", fontsize=8)
+colorbar.ax.tick_params(labelsize=7)
+
+plt.show()
+plt.close(fig)
+```
+
+<img
+src="oir_analysis_files/figure-commonmark/umap-cell-correlation-wr-joyal-output-1.png"
+id="umap-cell-correlation-wr-joyal" />
 
 ## Preliminary cell types
 
@@ -819,7 +722,6 @@ id="heatmap-scores-wr-joyal" />
 # as an independent read on the same question — where the two disagree, the disagreement is
 # the thing to look at before writing an override.
 cluster_calls = reference_correlation.idxmax(axis=1)
-marker_calls = mean_scores.idxmax(axis=1)
 
 # no calls made by hand yet, so every cluster below is the reference argmax
 cluster_call_overrides = {}
@@ -843,7 +745,6 @@ pd.DataFrame({
     "cells": wr_joyal.obs[ranked_key].value_counts(),
     "correlation": reference_correlation.max(axis=1).round(3),
     "margin": (sorted_correlation[:, -1] - sorted_correlation[:, -2]).round(3),
-    "marker call": marker_calls,
 })
 ```
 
@@ -860,20 +761,20 @@ pd.DataFrame({
     }
 </style>
 
-|     | cell_type   | cells | correlation | margin | marker call |
-|-----|-------------|-------|-------------|--------|-------------|
-| 1   | Rod         | 5613  | 0.861       | 0.064  | Rods        |
-| 2   | BC          | 2952  | 0.814       | 0.072  | Bipolar     |
-| 3   | AC          | 2029  | 0.842       | 0.103  | Amacrine    |
-| 4   | BC          | 1768  | 0.777       | 0.040  | Bipolar     |
-| 5   | MG          | 1230  | 0.865       | 0.116  | Muller Glia |
-| 6   | Cone        | 700   | 0.832       | 0.036  | Cones       |
-| 7   | AC          | 299   | 0.776       | 0.060  | Amacrine    |
-| 8   | RGC         | 140   | 0.764       | 0.049  | RGC         |
-| 9   | MG          | 120   | 0.755       | 0.028  | Muller Glia |
-| 10  | Endothelial | 106   | 0.760       | 0.040  | Pericytes   |
-| 11  | HC          | 101   | 0.752       | 0.111  | Horizontal  |
-| 12  | Microglia   | 85    | 0.778       | 0.238  | Microglia   |
+|     | cell_type   | cells | correlation | margin |
+|-----|-------------|-------|-------------|--------|
+| 1   | Rod         | 5613  | 0.914       | 0.045  |
+| 2   | BC          | 2952  | 0.902       | 0.074  |
+| 3   | AC          | 2029  | 0.903       | 0.039  |
+| 4   | BC          | 1768  | 0.882       | 0.060  |
+| 5   | MG          | 1230  | 0.904       | 0.072  |
+| 6   | Cone        | 700   | 0.900       | 0.039  |
+| 7   | AC          | 299   | 0.877       | 0.032  |
+| 8   | RGC         | 140   | 0.894       | 0.053  |
+| 9   | Astrocyte   | 120   | 0.832       | 0.016  |
+| 10  | Endothelial | 106   | 0.831       | 0.025  |
+| 11  | HC          | 101   | 0.890       | 0.103  |
+| 12  | Microglia   | 85    | 0.837       | 0.174  |
 
 </div>
 
@@ -909,6 +810,9 @@ for cluster in cell_composition.index:
         "cluster": cluster,
         "call": cluster_calls[cluster],
         "cells": int(in_cluster.sum()),
+        # the share held by the cluster's commonest per-cell call. A cluster near 1.0 is one
+        # cell type and needs nothing; the low ones are where to look.
+        "purity": round(counts.max() / counts.sum(), 2),
         "populations": ", ".join(f"{name} {n}" for name, n in populations.items()),
         "refined": bool(len(populations) > 1 or populations.index[0] != cluster_calls[cluster]),
     })
@@ -927,51 +831,50 @@ wr_joyal.uns["cell_type_colors"] = [
 ]
 ```
 
-    cluster        call  cells                 populations  refined
-          1         Rod   5613                    Rod 5440    False
-          2          BC   2952                     BC 2837    False
-          3          AC   2029                     AC 1819    False
-          4          BC   1768                     BC 1759    False
-          5          MG   1230                     MG 1194    False
-          6        Cone    700                    Cone 692    False
-          7          AC    299                      AC 299    False
-          8         RGC    140                     RGC 140    False
-          9          MG    120         Astrocyte 56, MG 47     True
-         10 Endothelial    106 Endothelial 41, Pericyte 64     True
-         11          HC    101                      HC 101    False
-         12   Microglia     85                Microglia 84    False
+    cluster        call  cells  purity                 populations  refined
+          1         Rod   5613    0.97                    Rod 5440    False
+          2          BC   2952    0.96                     BC 2837    False
+          3          AC   2029    0.90                     AC 1819    False
+          4          BC   1768    0.99                     BC 1759    False
+          5          MG   1230    0.97                     MG 1194    False
+          6        Cone    700    0.99                    Cone 692    False
+          7          AC    299    1.00                      AC 299    False
+          8         RGC    140    1.00                     RGC 140    False
+          9   Astrocyte    120    0.47         Astrocyte 56, MG 47     True
+         10 Endothelial    106    0.60 Endothelial 41, Pericyte 64     True
+         11          HC    101    1.00                      HC 101    False
+         12   Microglia     85    0.99                Microglia 84    False
 
-## Cluster composition by cell
+## Per-cell correlation by cell type
+
+The same correlations grouped by the calls the refinement settled on. A
+diagonal here is the check that the refinement worked: each cell type
+should correlate best with its own class.
 
 ``` python
-# every cluster's per-cell composition as one bar. A cluster that is one cell type is a single
-# block; a mixed one is divided, and the dashed line is the share a class has to clear to be
-# treated as a population rather than as dropout.
-shares = cell_composition.div(cell_composition.sum(axis=1), axis=0)
-shares = shares.loc[:, shares.max() > 0.01]
+# the same standardized correlations, grouped by the call the refinement settled on rather
+# than by cluster. A diagonal is the check that it worked.
+mean_by_type = standardized.groupby(wr_joyal.obs["cell_type"], observed=True).mean()
 
-fig, ax = plt.subplots(figsize=(9, 4.3), constrained_layout=True)
-left = np.zeros(len(shares))
-for population in shares.columns:
-    ax.barh(shares.index.astype(str), shares[population], left=left,
-            color=cell_type_palette[population], label=population, height=0.8)
-    left += shares[population].to_numpy()
-
-ax.axvline(min_share, color="#404040", linewidth=1.0, linestyle="--", zorder=3)
-ax.set_xlabel("Share of the cluster's cells", fontsize=9)
-ax.set_ylabel("Cluster", fontsize=9)
-ax.set_xlim(0, 1)
-ax.invert_yaxis()
-ax.tick_params(labelsize=8)
-ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
+fig, ax = plt.subplots(figsize=(6.5, 4.3), constrained_layout=True)
+sns.heatmap(mean_by_type, cmap="viridis", linewidths=0.5, linecolor="white",
+            xticklabels=True, yticklabels=True, center=0,
+            cbar_kws={"shrink": 0.6, "pad": 0.02, "label": "mean z"}, ax=ax)
+ax.set_xlabel("Reference class", fontsize=8)
+ax.set_ylabel("Called cell type", fontsize=8)
+ax.tick_params(axis="x", labelrotation=45, labelsize=7)
+ax.tick_params(axis="y", labelrotation=0, labelsize=7)
+ax.figure.axes[-1].yaxis.label.set_size(8)
+for label in ax.get_xticklabels():
+    label.set_ha("right")
 
 plt.show()
 plt.close(fig)
 ```
 
 <img
-src="oir_analysis_files/figure-commonmark/refine-scatter-wr-joyal-output-1.png"
-id="refine-scatter-wr-joyal" />
+src="oir_analysis_files/figure-commonmark/heatmap-cells-by-type-wr-joyal-output-1.png"
+id="heatmap-cells-by-type-wr-joyal" />
 
 ## Preliminary cell types on the UMAP
 
@@ -1421,13 +1324,13 @@ id="qc-violin-by-cluster-cd73ft-joyal" />
 ## Correlation with the reference
 
 ``` python
-# correlated over the query's variable genes rather than everything shared: the
-# housekeeping bulk is near-identical in every class and only lifts all twelve correlations
-# together, flattening the differences the call is made on
-feature_genes = [
-    gene for gene in cd73ft_joyal.var_names[cd73ft_joyal.var["highly_variable"]]
-    if gene in reference_centroids.var_names
-]
+# every gene the two share, matching the per-cell correlation below. Restricting to variable
+# genes was tried and does what its own rationale claims — the housekeeping bulk lifts all
+# twelve correlations together, so dropping it widens the mean margin from 0.061 to 0.080.
+# It also loses the astrocyte cluster: on variable genes cluster 9 is called MG by 0.028, and
+# on all of them it is Astrocyte, which is what its Pax2, Gfap and Rlbp1 say it is. Wider
+# margins mean the classes look more separable, not that the call is more often right.
+feature_genes = [gene for gene in cd73ft_joyal.var_names if gene in reference_centroids.var_names]
 
 cluster_profiles = pd.DataFrame(
     [
@@ -1456,12 +1359,11 @@ reference_correlation = pd.DataFrame(
     columns=reference_profiles.index,
 )
 
-print(f"{len(feature_genes)} of {int(cd73ft_joyal.var['highly_variable'].sum())} "
-      f"variable genes found in the reference")
+print(f"{len(feature_genes):,} of {cd73ft_joyal.n_vars:,} genes shared with the reference")
 reference_correlation.round(3)
 ```
 
-    1737 of 2000 variable genes found in the reference
+    15,585 of 18,098 genes shared with the reference
 
 <div>
 <style scoped>
@@ -1478,20 +1380,20 @@ reference_correlation.round(3)
 
 |  | AC | Astrocyte | BC | Cone | Endothelial | HC | MG | Microglia | Pericyte | RGC | RPE | Rod |
 |----|----|----|----|----|----|----|----|----|----|----|----|----|
-| 1 | 0.614 | 0.657 | 0.709 | 0.643 | 0.606 | 0.634 | 0.691 | 0.533 | 0.653 | 0.586 | 0.583 | 0.661 |
-| 2 | 0.542 | 0.748 | 0.538 | 0.496 | 0.639 | 0.548 | 0.840 | 0.526 | 0.672 | 0.516 | 0.586 | 0.544 |
-| 3 | 0.679 | 0.610 | 0.820 | 0.660 | 0.536 | 0.655 | 0.662 | 0.441 | 0.606 | 0.634 | 0.556 | 0.670 |
-| 4 | 0.590 | 0.647 | 0.699 | 0.636 | 0.576 | 0.636 | 0.685 | 0.513 | 0.630 | 0.568 | 0.566 | 0.651 |
-| 5 | 0.826 | 0.631 | 0.651 | 0.559 | 0.496 | 0.700 | 0.636 | 0.458 | 0.577 | 0.773 | 0.494 | 0.606 |
-| 6 | 0.513 | 0.594 | 0.620 | 0.793 | 0.507 | 0.556 | 0.637 | 0.477 | 0.551 | 0.485 | 0.631 | 0.728 |
-| 7 | 0.211 | 0.510 | 0.261 | 0.260 | 0.547 | 0.282 | 0.388 | 0.780 | 0.470 | 0.223 | 0.345 | 0.271 |
-| 8 | 0.375 | 0.612 | 0.411 | 0.420 | 0.709 | 0.430 | 0.602 | 0.529 | 0.752 | 0.379 | 0.522 | 0.443 |
-| 9 | 0.365 | 0.584 | 0.405 | 0.410 | 0.798 | 0.412 | 0.566 | 0.534 | 0.677 | 0.358 | 0.480 | 0.422 |
-| 10 | 0.442 | 0.681 | 0.445 | 0.437 | 0.602 | 0.446 | 0.713 | 0.515 | 0.610 | 0.416 | 0.590 | 0.464 |
-| 11 | 0.621 | 0.612 | 0.595 | 0.530 | 0.532 | 0.738 | 0.593 | 0.493 | 0.581 | 0.603 | 0.503 | 0.558 |
-| 12 | 0.438 | 0.766 | 0.449 | 0.409 | 0.614 | 0.466 | 0.701 | 0.514 | 0.620 | 0.421 | 0.538 | 0.446 |
-| 13 | 0.382 | 0.457 | 0.458 | 0.564 | 0.379 | 0.426 | 0.495 | 0.385 | 0.404 | 0.339 | 0.534 | 0.611 |
-| 14 | 0.306 | 0.374 | 0.295 | 0.264 | 0.345 | 0.290 | 0.392 | 0.322 | 0.348 | 0.279 | 0.297 | 0.285 |
+| 1 | 0.782 | 0.701 | 0.860 | 0.787 | 0.634 | 0.790 | 0.727 | 0.645 | 0.679 | 0.763 | 0.705 | 0.779 |
+| 2 | 0.697 | 0.814 | 0.694 | 0.670 | 0.693 | 0.706 | 0.885 | 0.672 | 0.722 | 0.682 | 0.744 | 0.681 |
+| 3 | 0.812 | 0.704 | 0.885 | 0.791 | 0.628 | 0.797 | 0.733 | 0.632 | 0.676 | 0.786 | 0.695 | 0.782 |
+| 4 | 0.778 | 0.698 | 0.863 | 0.789 | 0.630 | 0.788 | 0.728 | 0.638 | 0.678 | 0.757 | 0.700 | 0.778 |
+| 5 | 0.881 | 0.714 | 0.808 | 0.730 | 0.612 | 0.824 | 0.721 | 0.626 | 0.664 | 0.866 | 0.666 | 0.736 |
+| 6 | 0.722 | 0.687 | 0.784 | 0.878 | 0.615 | 0.744 | 0.710 | 0.633 | 0.652 | 0.706 | 0.728 | 0.832 |
+| 7 | 0.545 | 0.655 | 0.564 | 0.565 | 0.669 | 0.581 | 0.614 | 0.855 | 0.643 | 0.547 | 0.619 | 0.570 |
+| 8 | 0.591 | 0.702 | 0.595 | 0.598 | 0.776 | 0.617 | 0.685 | 0.681 | 0.837 | 0.596 | 0.678 | 0.606 |
+| 9 | 0.579 | 0.688 | 0.592 | 0.602 | 0.856 | 0.609 | 0.672 | 0.701 | 0.759 | 0.581 | 0.667 | 0.606 |
+| 10 | 0.636 | 0.761 | 0.629 | 0.622 | 0.682 | 0.649 | 0.783 | 0.647 | 0.704 | 0.627 | 0.752 | 0.629 |
+| 11 | 0.773 | 0.685 | 0.749 | 0.713 | 0.603 | 0.874 | 0.687 | 0.629 | 0.644 | 0.770 | 0.674 | 0.714 |
+| 12 | 0.634 | 0.841 | 0.630 | 0.621 | 0.676 | 0.658 | 0.777 | 0.663 | 0.697 | 0.631 | 0.722 | 0.626 |
+| 13 | 0.575 | 0.547 | 0.627 | 0.650 | 0.491 | 0.585 | 0.566 | 0.508 | 0.522 | 0.556 | 0.580 | 0.666 |
+| 14 | 0.495 | 0.462 | 0.497 | 0.448 | 0.424 | 0.486 | 0.465 | 0.425 | 0.437 | 0.482 | 0.435 | 0.441 |
 
 </div>
 
@@ -1577,12 +1479,16 @@ ranked_classes = pd.DataFrame(
 # Spearman again, written out rather than looped so all twelve classes come out of one product
 ranked_cells = ranked_cells - ranked_cells.mean(axis=1, keepdims=True)
 ranked_classes = ranked_classes - ranked_classes.mean(axis=1, keepdims=True)
-cell_correlation = (ranked_cells @ ranked_classes.T) / np.sqrt(
-    (ranked_cells ** 2).sum(axis=1)[:, None] * (ranked_classes ** 2).sum(axis=1)[None, :]
+cell_correlation = pd.DataFrame(
+    (ranked_cells @ ranked_classes.T) / np.sqrt(
+        (ranked_cells ** 2).sum(axis=1)[:, None] * (ranked_classes ** 2).sum(axis=1)[None, :]
+    ),
+    index=cd73ft_joyal.obs_names,
+    columns=reference_centroids.obs_names,
 )
 
 cd73ft_joyal.obs["cell_call"] = pd.Categorical(
-    reference_centroids.obs_names[cell_correlation.argmax(axis=1)],
+    cell_correlation.idxmax(axis=1),
     categories=sorted(reference_centroids.obs_names),
 )
 
@@ -1624,197 +1530,59 @@ cell_composition = pd.crosstab(cd73ft_joyal.obs[ranked_key], cd73ft_joyal.obs["c
 
 </div>
 
-## Marker scores
+## Per-cell correlation by cluster
+
+The per-cell correlations averaged over each cluster, shown the same
+three ways as the centroid heatmap. Where a cluster holds one cell type
+it has one bright class; where it holds two, the brightness is shared.
 
 ``` python
-retina_markers = {
-    "Rods": ["Rho", "Pde6b", "Nrl", "Nr2e3"],
-    "Cones": ["Opn1mw", "Opn1sw", "Arr3", "Thrb"],
-    "RGC": ["Rbpms", "Sncg", "Pou4f1", "Pou4f2"],
-    "Amacrine": ["Tfap2a", "Tfap2b", "Chat", "Vsx1"],
-    "Bipolar": ["Vsx2", "Isl1", "Prkca", "Cabp5"],
-    "Horizontal": ["Onecut1", "Onecut2", "Lhx1", "Prox1"],
-    "Muller_Glia": ["Rlbp1", "Glul", "Sox9", "Slc1a3"],
-    "Microglia": ["Cx3cr1", "P2ry12", "Tmem119", "Aif1"],
-    "Vascular_Endothelial": ["Cdh5", "Pecam1", "Tek"],
-    "Pericytes": ["Pdgfrb", "Acta2", "Des"],
-    "Astrocytes": ["Gfap", "Aldh1l1", "Aqp4"],
+# the same matrix three ways, matching the centroid heatmap above so the two can be read
+# against each other.
+#
+# standardized within each cell before averaging, which matters more than it looks. A cell's
+# correlation to every class rises with how many genes it captured: across these clusters the
+# mean gene count and the mean correlation to all twelve classes correlate at 0.96. Averaging
+# the raw numbers therefore draws a map of sequencing depth, on which the deepest clusters look
+# well matched to everything. Subtracting each cell's own mean and dividing by its own spread
+# leaves only which classes that cell preferred, which is the question.
+standardized = cell_correlation.sub(cell_correlation.mean(axis=1), axis=0).div(
+    cell_correlation.std(axis=1), axis=0
+)
+mean_cell_correlation = standardized.groupby(cd73ft_joyal.obs[ranked_key], observed=True).mean()
+
+cell_class_range = mean_cell_correlation.max(axis=0) - mean_cell_correlation.min(axis=0)
+cell_scaled_by_class = mean_cell_correlation.sub(
+    mean_cell_correlation.min(axis=0), axis=1
+).div(cell_class_range, axis=1)
+
+cell_cluster_range = mean_cell_correlation.max(axis=1) - mean_cell_correlation.min(axis=1)
+cell_scaled_by_cluster = mean_cell_correlation.sub(
+    mean_cell_correlation.min(axis=1), axis=0
+).div(cell_cluster_range, axis=0)
+
+cell_correlation_panels = {
+    "Mean per-cell z": mean_cell_correlation,
+    "Scaled per class": cell_scaled_by_class,
+    "Scaled per cluster": cell_scaled_by_cluster,
 }
 
-score_keys = []
-markers_present = {}
-for cell_type, genes in retina_markers.items():
-    present = [gene.upper() for gene in genes if gene.upper() in cd73ft_joyal.var_names]
-    score_key = f"score_{cell_type}"
-    sc.tl.score_genes(cd73ft_joyal, gene_list=present, score_name=score_key)
-    score_keys.append(score_key)
-    markers_present[cell_type] = present
-    print(f"{cell_type}: {len(present)}/{len(genes)} markers")
-```
+# the diagonal ordering the centroid heatmap uses, derived the same way
+cell_class_order = []
+for cluster in cell_scaled_by_cluster.index:
+    best = cell_scaled_by_cluster.loc[cluster].idxmax()
+    if best not in cell_class_order:
+        cell_class_order.append(best)
+cell_class_order += [n for n in cell_scaled_by_cluster.columns if n not in cell_class_order]
 
-    Rods: 4/4 markers
-    Cones: 4/4 markers
-    RGC: 4/4 markers
-    Amacrine: 4/4 markers
-    Bipolar: 4/4 markers
-    Horizontal: 4/4 markers
-    Muller_Glia: 4/4 markers
-    Microglia: 4/4 markers
-    Vascular_Endothelial: 3/3 markers
-    Pericytes: 3/3 markers
-    Astrocytes: 3/3 markers
-
-## Marker scores by cluster
-
-``` python
-score_df = sc.get.obs_df(cd73ft_joyal, keys=[ranked_key] + score_keys)
-
-for start in range(0, len(score_keys), 6):
-    group = score_keys[start:start + 6]
-    group_types = list(retina_markers)[start:start + 6]
-
-    fig, axes = plt.subplots(len(group), 1, squeeze=False, sharex=True, figsize=(9, 4.3),
-                             constrained_layout=True)
-    for ax, score_key, cell_type in zip(axes.flat, group, group_types):
-        sns.violinplot(data=score_df, x=ranked_key, y=score_key, hue=ranked_key,
-                       palette=cluster_palette, legend=False, dodge=False, cut=0,
-                       density_norm="width", inner="box", inner_kws=violin_inner_kws,
-                       linewidth=0.5, saturation=1, ax=ax)
-
-        cluster_order = list(cd73ft_joyal.obs[ranked_key].cat.categories)
-        for body in ax.collections:
-            extents = body.get_paths()[0].get_extents()
-            body.set_facecolor(cluster_palette[cluster_order[round((extents.x0 + extents.x1) / 2)]])
-
-        ax.set_ylabel(f"{cell_type.replace('_', ' ')} score", fontsize=7)
-        ax.set_xlabel("")
-        ax.tick_params(axis="y", labelsize=6)
-        ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
-        ax.set_axisbelow(True)
-
-    axes[-1][0].set_xlabel("Cluster", fontsize=9)
-    axes[-1][0].tick_params(axis="x", labelsize=8)
-    plt.show()
-    plt.close(fig)
-```
-
-<img
-src="oir_analysis_files/figure-commonmark/score-violin-by-cluster-cd73ft-joyal-output-1.png"
-id="score-violin-by-cluster-cd73ft-joyal-1" />
-
-<img
-src="oir_analysis_files/figure-commonmark/score-violin-by-cluster-cd73ft-joyal-output-2.png"
-id="score-violin-by-cluster-cd73ft-joyal-2" />
-
-## Marker scores on the UMAP
-
-``` python
-for start in range(0, len(score_keys), 3):
-    group = score_keys[start:start + 3]
-
-    fig, axs = plt.subplots(2, 3, height_ratios=[1, 0.22], figsize=(8.6, 3.4),
-                            constrained_layout=True)
-    for ax, bar_ax, score_key in zip(axs[0], axs[1], group):
-        sc.pl.umap(
-            cd73ft_joyal,
-            color=score_key,
-            ax=ax,
-            frameon=True,
-            colorbar_loc=None,
-            show=False,
-        )
-        ax.set_aspect("equal", adjustable="datalim")
-
-        # the strip reserves the space; the colorbar drawn inside it is excluded from the
-        # layout so its tick labels cannot push the panel around
-        bar_ax.axis("off")
-        colorbar_ax = bar_ax.inset_axes([0.325, 0.82, 0.35, 0.18])
-        colorbar_ax.set_in_layout(False)
-        colorbar = fig.colorbar(ax.collections[0], cax=colorbar_ax, orientation="horizontal")
-
-        # placed explicitly at the ends and middle: the automatic locator picks its own round
-        # numbers per score, so the tick count and positions differ from panel to panel
-        score_low, score_high = ax.collections[0].get_clim()
-        colorbar_ticks = np.linspace(score_low, score_high, 3)
-        colorbar.set_ticks(colorbar_ticks, labels=[f"{tick:.2f}" for tick in colorbar_ticks])
-        colorbar.ax.tick_params(labelsize=7)
-
-    for empty_ax in axs[0][len(group):]:
-        fig.delaxes(empty_ax)
-    for empty_bar_ax in axs[1][len(group):]:
-        empty_bar_ax.axis("off")
-
-    plt.show()
-    plt.close(fig)
-```
-
-<img
-src="oir_analysis_files/figure-commonmark/umap-scores-cd73ft-joyal-output-1.png"
-id="umap-scores-cd73ft-joyal-1" />
-
-<img
-src="oir_analysis_files/figure-commonmark/umap-scores-cd73ft-joyal-output-2.png"
-id="umap-scores-cd73ft-joyal-2" />
-
-<img
-src="oir_analysis_files/figure-commonmark/umap-scores-cd73ft-joyal-output-3.png"
-id="umap-scores-cd73ft-joyal-3" />
-
-<img
-src="oir_analysis_files/figure-commonmark/umap-scores-cd73ft-joyal-output-4.png"
-id="umap-scores-cd73ft-joyal-4" />
-
-## Marker genes by cluster
-
-``` python
-# figsize is deliberately not passed: dotplot derives its own from the gene and cluster counts,
-# and forcing it to slide dimensions packs 41 genes across 21 clusters until the dots overlap
-sc.pl.dotplot(cd73ft_joyal, markers_present, groupby=ranked_key, standard_scale="var")
-```
-
-<img
-src="oir_analysis_files/figure-commonmark/dotplot-markers-cd73ft-joyal-output-1.png"
-id="dotplot-markers-cd73ft-joyal" />
-
-## Marker score heatmap
-
-``` python
-mean_scores = score_df.groupby(ranked_key, observed=True)[score_keys].mean()
-mean_scores.columns = [cell_type.replace("_", " ") for cell_type in retina_markers]
-
-# the same matrix three ways, because they answer different questions: the raw means show
-# magnitude, scaling down a column asks "which cluster is most this cell type", and scaling
-# across a row asks "which cell type best fits this cluster" — the annotation question
-scaled_by_type = (mean_scores - mean_scores.min()) / (mean_scores.max() - mean_scores.min())
-row_range = mean_scores.max(axis=1) - mean_scores.min(axis=1)
-scaled_by_cluster = mean_scores.sub(mean_scores.min(axis=1), axis=0).div(row_range, axis=0)
-
-score_normalizations = {
-    "Mean score": mean_scores,
-    "Scaled per cell type": scaled_by_type,
-    "Scaled per cluster": scaled_by_cluster,
-}
-
-# walk the clusters in order and take each one's best cell type; a type already placed is
-# skipped, and any type no cluster leads with is appended. The matches then read as a
-# diagonal rather than being scattered across the panel.
-column_order = []
-for cluster in scaled_by_cluster.index:
-    best = scaled_by_cluster.loc[cluster].idxmax()
-    if best not in column_order:
-        column_order.append(best)
-column_order += [c for c in scaled_by_cluster.columns if c not in column_order]
-
-fig, axes = plt.subplots(1, len(score_normalizations), squeeze=False, figsize=(9, 4.3),
+fig, axes = plt.subplots(1, len(cell_correlation_panels), squeeze=False, figsize=(9, 4.3),
                          constrained_layout=True)
-for ax, (title, matrix) in zip(axes.flat, score_normalizations.items()):
-    # as on the reference heatmap: left at "auto" the labels thin to every other one across
-    # three panels, which leaves half the cell types and half the clusters unnamed
-    sns.heatmap(matrix[column_order], cmap="viridis", linewidths=0.5, linecolor="white",
+for ax, (title, matrix) in zip(axes.flat, cell_correlation_panels.items()):
+    sns.heatmap(matrix[cell_class_order], cmap="viridis", linewidths=0.5, linecolor="white",
                 xticklabels=True, yticklabels=True,
                 cbar_kws={"shrink": 0.6, "pad": 0.02}, ax=ax)
     ax.set_title(title, fontsize=9)
-    ax.set_xlabel("Cell type", fontsize=8)
+    ax.set_xlabel("Reference class", fontsize=8)
     ax.set_ylabel("Cluster", fontsize=8)
     ax.tick_params(axis="x", labelrotation=45, labelsize=7)
     ax.tick_params(axis="y", labelrotation=0, labelsize=7)
@@ -1826,8 +1594,46 @@ plt.close(fig)
 ```
 
 <img
-src="oir_analysis_files/figure-commonmark/heatmap-scores-cd73ft-joyal-output-1.png"
-id="heatmap-scores-cd73ft-joyal" />
+src="oir_analysis_files/figure-commonmark/heatmap-cells-by-cluster-cd73ft-joyal-output-1.png"
+id="heatmap-cells-by-cluster-cd73ft-joyal" />
+
+## Per-cell correlation on the UMAP
+
+The same standardized correlations, one panel per reference class. A
+class with a population in this batch lights up somewhere; a class
+without one has nowhere bright to sit.
+
+``` python
+# one colour scale across all twelve panels, which the marker scores could never have: those
+# were each centred on their own control set, so a bright panel meant a bright gene list. A
+# standardized correlation is the same quantity in every panel, so the panels are comparable.
+umap_coords = cd73ft_joyal.obsm["X_umap"]
+z_limit = float(np.abs(standardized.to_numpy()).max())
+
+fig, axes = plt.subplots(3, 4, figsize=(9, 5.4), constrained_layout=True)
+for ax, reference_class in zip(axes.flat, standardized.columns):
+    points = ax.scatter(umap_coords[:, 0], umap_coords[:, 1], s=1, linewidths=0,
+                        c=standardized[reference_class].to_numpy(), cmap="viridis",
+                        vmin=-z_limit, vmax=z_limit)
+    ax.set_title(reference_class, fontsize=9)
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+for empty_ax in axes.flat[len(standardized.columns):]:
+    empty_ax.axis("off")
+
+colorbar = fig.colorbar(points, ax=axes, location="right", shrink=0.4, pad=0.02, aspect=25)
+colorbar.set_label("z within cell", fontsize=8)
+colorbar.ax.tick_params(labelsize=7)
+
+plt.show()
+plt.close(fig)
+```
+
+<img
+src="oir_analysis_files/figure-commonmark/umap-cell-correlation-cd73ft-joyal-output-1.png"
+id="umap-cell-correlation-cd73ft-joyal" />
 
 ## Preliminary cell types
 
@@ -1836,7 +1642,6 @@ id="heatmap-scores-cd73ft-joyal" />
 # as an independent read on the same question — where the two disagree, the disagreement is
 # the thing to look at before writing an override.
 cluster_calls = reference_correlation.idxmax(axis=1)
-marker_calls = mean_scores.idxmax(axis=1)
 
 # no calls made by hand yet, so every cluster below is the reference argmax
 cluster_call_overrides = {}
@@ -1860,7 +1665,6 @@ pd.DataFrame({
     "cells": cd73ft_joyal.obs[ranked_key].value_counts(),
     "correlation": reference_correlation.max(axis=1).round(3),
     "margin": (sorted_correlation[:, -1] - sorted_correlation[:, -2]).round(3),
-    "marker call": marker_calls,
 })
 ```
 
@@ -1877,22 +1681,22 @@ pd.DataFrame({
     }
 </style>
 
-|     | cell_type   | cells | correlation | margin | marker call          |
-|-----|-------------|-------|-------------|--------|----------------------|
-| 1   | BC          | 2860  | 0.709       | 0.019  | Bipolar              |
-| 2   | MG          | 1899  | 0.840       | 0.092  | Muller Glia          |
-| 3   | BC          | 1287  | 0.820       | 0.141  | Bipolar              |
-| 4   | BC          | 1244  | 0.699       | 0.014  | Bipolar              |
-| 5   | AC          | 916   | 0.826       | 0.053  | Amacrine             |
-| 6   | Cone        | 742   | 0.793       | 0.064  | Cones                |
-| 7   | Microglia   | 305   | 0.780       | 0.233  | Microglia            |
-| 8   | Pericyte    | 305   | 0.752       | 0.044  | Pericytes            |
-| 9   | Endothelial | 218   | 0.798       | 0.121  | Vascular Endothelial |
-| 10  | MG          | 197   | 0.713       | 0.031  | Muller Glia          |
-| 11  | HC          | 120   | 0.738       | 0.117  | Horizontal           |
-| 12  | Astrocyte   | 113   | 0.766       | 0.065  | Muller Glia          |
-| 13  | Rod         | 80    | 0.611       | 0.047  | Rods                 |
-| 14  | MG          | 43    | 0.392       | 0.018  | Muller Glia          |
+|     | cell_type   | cells | correlation | margin |
+|-----|-------------|-------|-------------|--------|
+| 1   | BC          | 2860  | 0.860       | 0.071  |
+| 2   | MG          | 1899  | 0.885       | 0.071  |
+| 3   | BC          | 1287  | 0.885       | 0.073  |
+| 4   | BC          | 1244  | 0.863       | 0.074  |
+| 5   | AC          | 916   | 0.881       | 0.016  |
+| 6   | Cone        | 742   | 0.878       | 0.046  |
+| 7   | Microglia   | 305   | 0.855       | 0.186  |
+| 8   | Pericyte    | 305   | 0.837       | 0.060  |
+| 9   | Endothelial | 218   | 0.856       | 0.098  |
+| 10  | MG          | 197   | 0.783       | 0.022  |
+| 11  | HC          | 120   | 0.874       | 0.101  |
+| 12  | Astrocyte   | 113   | 0.841       | 0.063  |
+| 13  | Rod         | 80    | 0.666       | 0.016  |
+| 14  | BC          | 43    | 0.497       | 0.002  |
 
 </div>
 
@@ -1928,6 +1732,9 @@ for cluster in cell_composition.index:
         "cluster": cluster,
         "call": cluster_calls[cluster],
         "cells": int(in_cluster.sum()),
+        # the share held by the cluster's commonest per-cell call. A cluster near 1.0 is one
+        # cell type and needs nothing; the low ones are where to look.
+        "purity": round(counts.max() / counts.sum(), 2),
         "populations": ", ".join(f"{name} {n}" for name, n in populations.items()),
         "refined": bool(len(populations) > 1 or populations.index[0] != cluster_calls[cluster]),
     })
@@ -1946,53 +1753,52 @@ cd73ft_joyal.uns["cell_type_colors"] = [
 ]
 ```
 
-    cluster        call  cells     populations  refined
-          1          BC   2860         BC 2842    False
-          2          MG   1899         MG 1869    False
-          3          BC   1287         BC 1228    False
-          4          BC   1244         BC 1225    False
-          5          AC    916          AC 662    False
-          6        Cone    742        Cone 710    False
-          7   Microglia    305   Microglia 296    False
-          8    Pericyte    305    Pericyte 303    False
-          9 Endothelial    218 Endothelial 218    False
-         10          MG    197          MG 154    False
-         11          HC    120          HC 120    False
-         12   Astrocyte    113   Astrocyte 113    False
-         13         Rod     80          Rod 67    False
-         14          MG     43           BC 21     True
+    cluster        call  cells  purity     populations  refined
+          1          BC   2860    0.99         BC 2842    False
+          2          MG   1899    0.98         MG 1869    False
+          3          BC   1287    0.95         BC 1228    False
+          4          BC   1244    0.98         BC 1225    False
+          5          AC    916    0.72          AC 662    False
+          6        Cone    742    0.96        Cone 710    False
+          7   Microglia    305    0.97   Microglia 296    False
+          8    Pericyte    305    0.99    Pericyte 303    False
+          9 Endothelial    218    1.00 Endothelial 218    False
+         10          MG    197    0.78          MG 154    False
+         11          HC    120    1.00          HC 120    False
+         12   Astrocyte    113    1.00   Astrocyte 113    False
+         13         Rod     80    0.84          Rod 67    False
+         14          BC     43    0.49           BC 21    False
 
-## Cluster composition by cell
+## Per-cell correlation by cell type
+
+The same correlations grouped by the calls the refinement settled on. A
+diagonal here is the check that the refinement worked: each cell type
+should correlate best with its own class.
 
 ``` python
-# every cluster's per-cell composition as one bar. A cluster that is one cell type is a single
-# block; a mixed one is divided, and the dashed line is the share a class has to clear to be
-# treated as a population rather than as dropout.
-shares = cell_composition.div(cell_composition.sum(axis=1), axis=0)
-shares = shares.loc[:, shares.max() > 0.01]
+# the same standardized correlations, grouped by the call the refinement settled on rather
+# than by cluster. A diagonal is the check that it worked.
+mean_by_type = standardized.groupby(cd73ft_joyal.obs["cell_type"], observed=True).mean()
 
-fig, ax = plt.subplots(figsize=(9, 4.3), constrained_layout=True)
-left = np.zeros(len(shares))
-for population in shares.columns:
-    ax.barh(shares.index.astype(str), shares[population], left=left,
-            color=cell_type_palette[population], label=population, height=0.8)
-    left += shares[population].to_numpy()
-
-ax.axvline(min_share, color="#404040", linewidth=1.0, linestyle="--", zorder=3)
-ax.set_xlabel("Share of the cluster's cells", fontsize=9)
-ax.set_ylabel("Cluster", fontsize=9)
-ax.set_xlim(0, 1)
-ax.invert_yaxis()
-ax.tick_params(labelsize=8)
-ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
+fig, ax = plt.subplots(figsize=(6.5, 4.3), constrained_layout=True)
+sns.heatmap(mean_by_type, cmap="viridis", linewidths=0.5, linecolor="white",
+            xticklabels=True, yticklabels=True, center=0,
+            cbar_kws={"shrink": 0.6, "pad": 0.02, "label": "mean z"}, ax=ax)
+ax.set_xlabel("Reference class", fontsize=8)
+ax.set_ylabel("Called cell type", fontsize=8)
+ax.tick_params(axis="x", labelrotation=45, labelsize=7)
+ax.tick_params(axis="y", labelrotation=0, labelsize=7)
+ax.figure.axes[-1].yaxis.label.set_size(8)
+for label in ax.get_xticklabels():
+    label.set_ha("right")
 
 plt.show()
 plt.close(fig)
 ```
 
 <img
-src="oir_analysis_files/figure-commonmark/refine-scatter-cd73ft-joyal-output-1.png"
-id="refine-scatter-cd73ft-joyal" />
+src="oir_analysis_files/figure-commonmark/heatmap-cells-by-type-cd73ft-joyal-output-1.png"
+id="heatmap-cells-by-type-cd73ft-joyal" />
 
 ## Preliminary cell types on the UMAP
 
