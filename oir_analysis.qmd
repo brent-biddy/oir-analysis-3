@@ -123,22 +123,22 @@ on.
 adata_path = Path("data/processed/GSE150703_adata.h5ad")
 adata_path.parent.mkdir(parents=True, exist_ok=True)
 
-if adata_path.exists():
+if adata_path.exists():                        # built once, then read back on later renders
     adata = sc.read_h5ad(adata_path)
 else:
-    counts = pd.read_csv(query_path, sep="\t", index_col=0).T
+    counts = pd.read_csv(query_path, sep="\t", index_col=0).T   # genes x cells, so transposed
 
     adata = ad.AnnData(X=csr_matrix(counts.values))
     adata.obs_names = counts.index.astype(str)
     adata.var_names = counts.columns.astype(str)
 
-    fields = pd.Series(adata.obs_names).str.split("_", expand=True)
+    fields = pd.Series(adata.obs_names).str.split("_", expand=True)  # split barcode into parts
     adata.obs["condition"] = pd.Categorical(fields[0].values)
     adata.obs["timepoint"] = pd.Categorical(fields[1].values)
     adata.obs["sort"] = pd.Categorical(fields[2].values)
     adata.obs["lab"] = pd.Categorical(fields[3].values)
     adata.obs["replicate"] = pd.Categorical(fields[4].values)
-    adata.obs["batch"] = pd.Categorical(fields[2].str.cat(fields[3], sep="_").values)
+    adata.obs["batch"] = pd.Categorical(fields[2].str.cat(fields[3], sep="_").values)  # sort x lab
 
     adata.write_h5ad(adata_path)
 
