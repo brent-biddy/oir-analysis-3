@@ -22,7 +22,9 @@ format:
 jupyter: oir-analysis-3
 ---
 
-## Setup
+# Setup
+
+## Load Libraries
 
 First, let's load the libraries we need. We'll also set a few default plotting parameters here,
 so the figures stay consistent throughout the document.
@@ -52,7 +54,7 @@ plt.rcParams.update({
 })
 ```
 
-## Download
+## Download Data
 
 Now let's download the two datasets we need: the OIR and normoxia retina counts from GEO, and
 the mouse retina cell atlas we'll use as an annotation reference. Both are saved to `data/raw/`,
@@ -98,7 +100,7 @@ query_path = source_paths["query"]
 reference_path = source_paths["reference"]
 ```
 
-## Build the AnnData
+## Build Query AnnData
 
 Next, let's build an AnnData object from the query counts. The matrix comes as genes by cells,
 so we'll transpose it and store it sparsely.
@@ -147,7 +149,7 @@ adata
 
 The object is saved to `data/processed/` and re-used on later renders.
 
-## Reference centroids
+## Build Reference Centroids
 
 Now let's build the reference we'll annotate against. The mouse retina cell atlas holds 330,930
 cells across twelve major cell types, all of it healthy retina.

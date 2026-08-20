@@ -2,10 +2,13 @@
 Brent Biddy
 2026-08-20
 
+- [Setup](#setup)
 - [WR_Joyal](#wr_joyal)
 - [Cd73ft_Joyal](#cd73ft_joyal)
 
-## Setup
+# Setup
+
+## Load Libraries
 
 First, let’s load the libraries we need. We’ll also set a few default
 plotting parameters here, so the figures stay consistent throughout the
@@ -35,7 +38,7 @@ plt.rcParams.update({
 })
 ```
 
-## Download
+## Download Data
 
 Now let’s download the two datasets we need: the OIR and normoxia retina
 counts from GEO, and the mouse retina cell atlas we’ll use as an
@@ -86,7 +89,7 @@ reference_path = source_paths["reference"]
     query: GSE150703_retina_NORM_OIR_P14_P17_C57_WR_CD73FT_noamg_normalizedUMI_Count_DGEmatrix.txt.gz  (236 MB)
     reference: a420c2bf-feeb-48db-a6c7-71f492f23131.h5ad  (3690 MB)
 
-## Build the AnnData
+## Build Query AnnData
 
 Next, let’s build an AnnData object from the query counts. The matrix
 comes as genes by cells, so we’ll transpose it and store it sparsely.
@@ -137,7 +140,7 @@ adata
 
 The object is saved to `data/processed/` and re-used on later renders.
 
-## Reference centroids
+## Build Reference Centroids
 
 Now let’s build the reference we’ll annotate against. The mouse retina
 cell atlas holds 330,930 cells across twelve major cell types, all of it
