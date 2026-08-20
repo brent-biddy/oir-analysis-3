@@ -3,8 +3,8 @@ Brent Biddy
 2026-08-20
 
 - [Setup](#setup)
-- [WR_Joyal](#wr_joyal)
-- [Cd73ft_Joyal](#cd73ft_joyal)
+- [Whole Retina](#whole-retina)
+- [Rod-depleted Retina](#rod-depleted-retina)
 
 # Setup
 
@@ -101,11 +101,11 @@ into columns:
     │   │   │  │     │  └── droplet barcode
     │   │   │  │     └───── replicate
     │   │   │  └─────────── lab
-    │   │   └────────────── sort
+    │   │   └────────────── prep
     │   └────────────────── timepoint
     └────────────────────── condition
 
-We’ll also combine sort and lab into a batch column, since that pairing
+We’ll also combine prep and lab into a batch column, since that pairing
 is what we’ll cluster on.
 
 ``` python
@@ -124,18 +124,31 @@ else:
     fields = pd.Series(adata.obs_names).str.split("_", expand=True)  # split barcode into parts
     adata.obs["condition"] = pd.Categorical(fields[0].values)
     adata.obs["timepoint"] = pd.Categorical(fields[1].values)
-    adata.obs["sort"] = pd.Categorical(fields[2].values)
+    adata.obs["prep"] = pd.Categorical(fields[2].values)
     adata.obs["lab"] = pd.Categorical(fields[3].values)
     adata.obs["replicate"] = pd.Categorical(fields[4].values)
-    adata.obs["batch"] = pd.Categorical(fields[2].str.cat(fields[3], sep="_").values)  # sort x lab
+    adata.obs["batch"] = pd.Categorical(fields[2].str.cat(fields[3], sep="_").values)  # prep x lab
 
     adata.write_h5ad(adata_path)
+
+# outside the guard, so a colour can be changed and re-rendered without rebuilding anything
+obs_palettes = {
+    "condition": {"NORM": "#2AABB8", "OIR": "#E87D2A"},
+    "timepoint": {"P14": "#2855A0", "P17": "#D63650"},
+    "prep":      {"Cd73ft": "#C9A227", "WR": "#5DB85D"},
+    "lab":       {"Joyal": "#7B4FB5", "Mccarrol": "#A0522D"},
+    "batch":     {"Cd73ft_Joyal": "#C9A227", "WR_Joyal": "#5DB85D", "WR_Mccarrol": "#A0522D"},
+}
+
+for obs_key, palette in obs_palettes.items():
+    adata.uns[f"{obs_key}_colors"] = [palette[c] for c in adata.obs[obs_key].cat.categories]
 
 adata
 ```
 
     AnnData object with n_obs × n_vars = 31271 × 21408
-        obs: 'condition', 'timepoint', 'sort', 'lab', 'replicate', 'batch'
+        obs: 'condition', 'timepoint', 'prep', 'lab', 'replicate', 'batch'
+        uns: 'condition_colors', 'timepoint_colors', 'prep_colors', 'lab_colors', 'batch_colors'
         layers: None (.X)
 
 The object is saved to `data/processed/` and re-used on later renders.
@@ -195,20 +208,43 @@ reference_centroids
         var: 'feature_name'
         layers: 'counts', None (.X)
 
-# WR_Joyal
+# Whole Retina
 
-## Cluster WR_Joyal
+Now let’s work through the whole retina prep, the `WR_Joyal` batch. It
+holds 15,143 cells across both conditions and both timepoints, though
+not evenly:
+
+``` python
+wr_joyal_obs = adata.obs[adata.obs["batch"] == "WR_Joyal"]
+design = pd.crosstab(wr_joyal_obs["condition"], wr_joyal_obs["timepoint"])
+print(design.rename_axis(index=None, columns=None).to_markdown())   # a real table, not a repr
+```
+
+|      |  P14 |  P17 |
+|:-----|-----:|-----:|
+| NORM | 2512 |  932 |
+| OIR  | 5821 | 5878 |
+
+## Cluster Cells
+
+First we’ll subset the query data down to the `WR_Joyal` batch, and
+analyze the batch’s cells in isolation.
+
+Then we’ll compute QC metrics, filter out rarely detected genes, keep
+the most variable genes, and embed. Rather than commit to one resolution
+up front, we’ll cluster across a sweep of resolutions and choose from it
+in the next step.
 
 ``` python
 wr_joyal_clustered_path = Path("data/processed/GSE150703_adata_WR_Joyal_clustered.h5ad")
 
-if wr_joyal_clustered_path.exists():
+if wr_joyal_clustered_path.exists():           # clustered once, then read back on later renders
     wr_joyal = sc.read_h5ad(wr_joyal_clustered_path)
 else:
-    wr_joyal = adata[adata.obs["batch"] == "WR_Joyal"].copy()
+    wr_joyal = adata[adata.obs["batch"] == "WR_Joyal"].copy()   # this batch only
 
-    for column in ["condition", "timepoint", "sort", "lab", "replicate", "batch"]:
-        wr_joyal.obs[column] = wr_joyal.obs[column].cat.remove_unused_categories()
+    for column in ["condition", "timepoint", "prep", "lab", "replicate", "batch"]:
+        wr_joyal.obs[column] = wr_joyal.obs[column].cat.remove_unused_categories()  # drop empty levels
 
     wr_joyal.var["mt"] = wr_joyal.var_names.str.startswith("MT-")
     wr_joyal.var["ribo"] = wr_joyal.var_names.str.startswith(("RPS", "RPL"))
@@ -216,13 +252,13 @@ else:
     sc.pp.calculate_qc_metrics(
         wr_joyal,
         qc_vars=["mt", "ribo", "hb"],
-        expr_type="log1p",
+        expr_type="log1p",                     # X is normalized, so these are not UMI fractions
         percent_top=None,
         log1p=False,
         inplace=True,
     )
 
-    sc.pp.filter_genes(wr_joyal, min_cells=3)
+    sc.pp.filter_genes(wr_joyal, min_cells=3)  # rarely detected genes distort the variable set
     sc.pp.highly_variable_genes(wr_joyal, n_top_genes=2000, flavor="seurat")
     sc.pp.pca(wr_joyal, svd_solver="arpack")
     sc.pp.neighbors(wr_joyal, n_neighbors=10, n_pcs=40)
@@ -232,52 +268,43 @@ else:
         sc.tl.leiden(
             wr_joyal,
             resolution=resolution,
-            key_added=f"leiden_res_{resolution:.2f}_v0",
+            key_added=f"leiden_res_{resolution:.2f}_v0",   # one column per resolution
             flavor="igraph",
-            random_state=0,
+            random_state=0,                    # the one argument here that decides the output
         )
 
     wr_joyal.write_h5ad(wr_joyal_clustered_path)
+
+# below the guard, so these take effect on a re-render without re-clustering
+for obs_key, palette in obs_palettes.items():
+    categories = wr_joyal.obs[obs_key].cat.categories
+    wr_joyal.uns[f"{obs_key}_colors"] = [palette[category] for category in categories]
+
+draw_order = np.random.default_rng(0).permutation(wr_joyal.n_obs)  # last drawn sits on top
+
+resolution_keys = [c for c in wr_joyal.obs.columns if c.endswith("_v0")]  # every resolution swept
+
+for leiden_key_v0 in resolution_keys:                # tab20, cycled once past 20 clusters
+    categories = wr_joyal.obs[leiden_key_v0].cat.categories
+    wr_joyal.uns[f"{leiden_key_v0}_colors"] = [
+        mcolors.to_hex(plt.cm.tab20.colors[int(category) % 20]) for category in categories
+    ]
 
 wr_joyal
 ```
 
     AnnData object with n_obs × n_vars = 15143 × 19084
-        obs: 'condition', 'timepoint', 'sort', 'lab', 'replicate', 'batch', 'n_genes_by_log1p', 'total_log1p', 'total_log1p_mt', 'pct_log1p_mt', 'total_log1p_ribo', 'pct_log1p_ribo', 'total_log1p_hb', 'pct_log1p_hb', 'leiden_res_0.50_v0', 'leiden_res_0.60_v0', 'leiden_res_0.70_v0', 'leiden_res_0.80_v0', 'leiden_res_0.90_v0', 'leiden_res_1.00_v0', 'leiden_res_1.10_v0', 'leiden_res_1.20_v0', 'leiden_res_1.30_v0', 'leiden_res_1.40_v0', 'leiden_res_1.50_v0'
+        obs: 'condition', 'timepoint', 'prep', 'lab', 'replicate', 'batch', 'n_genes_by_log1p', 'total_log1p', 'total_log1p_mt', 'pct_log1p_mt', 'total_log1p_ribo', 'pct_log1p_ribo', 'total_log1p_hb', 'pct_log1p_hb', 'leiden_res_0.50_v0', 'leiden_res_0.60_v0', 'leiden_res_0.70_v0', 'leiden_res_0.80_v0', 'leiden_res_0.90_v0', 'leiden_res_1.00_v0', 'leiden_res_1.10_v0', 'leiden_res_1.20_v0', 'leiden_res_1.30_v0', 'leiden_res_1.40_v0', 'leiden_res_1.50_v0'
         var: 'mt', 'ribo', 'hb', 'n_cells_by_log1p', 'mean_log1p', 'pct_dropout_by_log1p', 'total_log1p', 'n_cells', 'highly_variable', 'means', 'dispersions', 'dispersions_norm'
-        uns: 'hvg', 'leiden_res_0.50_v0', 'leiden_res_0.60_v0', 'leiden_res_0.70_v0', 'leiden_res_0.80_v0', 'leiden_res_0.90_v0', 'leiden_res_1.00_v0', 'leiden_res_1.10_v0', 'leiden_res_1.20_v0', 'leiden_res_1.30_v0', 'leiden_res_1.40_v0', 'leiden_res_1.50_v0', 'neighbors', 'pca', 'umap'
+        uns: 'hvg', 'leiden_res_0.50_v0', 'leiden_res_0.60_v0', 'leiden_res_0.70_v0', 'leiden_res_0.80_v0', 'leiden_res_0.90_v0', 'leiden_res_1.00_v0', 'leiden_res_1.10_v0', 'leiden_res_1.20_v0', 'leiden_res_1.30_v0', 'leiden_res_1.40_v0', 'leiden_res_1.50_v0', 'neighbors', 'pca', 'umap', 'condition_colors', 'timepoint_colors', 'prep_colors', 'lab_colors', 'batch_colors', 'leiden_res_0.50_v0_colors', 'leiden_res_0.60_v0_colors', 'leiden_res_0.70_v0_colors', 'leiden_res_0.80_v0_colors', 'leiden_res_0.90_v0_colors', 'leiden_res_1.00_v0_colors', 'leiden_res_1.10_v0_colors', 'leiden_res_1.20_v0_colors', 'leiden_res_1.30_v0_colors', 'leiden_res_1.40_v0_colors', 'leiden_res_1.50_v0_colors'
         obsm: 'X_pca', 'X_umap'
         varm: 'PCs'
         obsp: 'connectivities', 'distances'
         layers: None (.X)
 
-``` python
-obs_palettes = {
-    "condition": {"NORM": "#2AABB8", "OIR": "#E87D2A"},
-    "timepoint": {"P14": "#2855A0", "P17": "#D63650"},
-    "sort":      {"Cd73ft": "#C9A227", "WR": "#5DB85D"},
-    "lab":       {"Joyal": "#7B4FB5", "Mccarrol": "#A0522D"},
-    "batch":     {"Cd73ft_Joyal": "#C9A227", "WR_Joyal": "#5DB85D", "WR_Mccarrol": "#A0522D"},
-}
-
-for obs_key, palette in obs_palettes.items():
-    categories = wr_joyal.obs[obs_key].cat.categories
-    wr_joyal.uns[f"{obs_key}_colors"] = [palette[category] for category in categories]
-
-# cells are drawn in this order, so whatever comes last sits on top. Shuffled, because the
-# matrix order is the order cells came off the sequencer and it buries whole clusters under
-# their neighbours. To put particular clusters on top instead, sort by the cluster column:
-#   draw_order = wr_joyal.obs[ranked_key].sort_values(ascending=False).index
-draw_order = np.random.default_rng(0).permutation(wr_joyal.n_obs)
-
-resolution_keys = [column for column in wr_joyal.obs.columns if column.endswith("_v0")]
-
-for leiden_key_v0 in resolution_keys:
-    categories = wr_joyal.obs[leiden_key_v0].cat.categories
-    wr_joyal.uns[f"{leiden_key_v0}_colors"] = [
-        mcolors.to_hex(plt.cm.tab20.colors[int(category) % 20]) for category in categories
-    ]
-```
+The clustered object is saved to `data/processed/`, so later renders
+read it back and skip the clustering entirely. To re-run any of it,
+delete that file first.
 
 ## Leiden sweep
 
@@ -1383,9 +1410,9 @@ plt.close(fig)
 src="oir_analysis_files/figure-commonmark/txn1-violin-stratified-by-condition-wr-joyal-output-1.png"
 id="txn1-violin-stratified-by-condition-wr-joyal" />
 
-# Cd73ft_Joyal
+# Rod-depleted Retina
 
-## Cluster Cd73ft_Joyal
+## Cluster Cells
 
 ``` python
 cd73ft_joyal_clustered_path = Path("data/processed/GSE150703_adata_Cd73ft_Joyal_clustered.h5ad")
@@ -1395,7 +1422,7 @@ if cd73ft_joyal_clustered_path.exists():
 else:
     cd73ft_joyal = adata[adata.obs["batch"] == "Cd73ft_Joyal"].copy()
 
-    for column in ["condition", "timepoint", "sort", "lab", "replicate", "batch"]:
+    for column in ["condition", "timepoint", "prep", "lab", "replicate", "batch"]:
         cd73ft_joyal.obs[column] = cd73ft_joyal.obs[column].cat.remove_unused_categories()
 
     cd73ft_joyal.var["mt"] = cd73ft_joyal.var_names.str.startswith("MT-")
@@ -1427,45 +1454,32 @@ else:
 
     cd73ft_joyal.write_h5ad(cd73ft_joyal_clustered_path)
 
-cd73ft_joyal
-```
-
-    AnnData object with n_obs × n_vars = 10329 × 18098
-        obs: 'condition', 'timepoint', 'sort', 'lab', 'replicate', 'batch', 'n_genes_by_log1p', 'total_log1p', 'total_log1p_mt', 'pct_log1p_mt', 'total_log1p_ribo', 'pct_log1p_ribo', 'total_log1p_hb', 'pct_log1p_hb', 'leiden_res_0.50_v0', 'leiden_res_0.60_v0', 'leiden_res_0.70_v0', 'leiden_res_0.80_v0', 'leiden_res_0.90_v0', 'leiden_res_1.00_v0', 'leiden_res_1.10_v0', 'leiden_res_1.20_v0', 'leiden_res_1.30_v0', 'leiden_res_1.40_v0', 'leiden_res_1.50_v0'
-        var: 'mt', 'ribo', 'hb', 'n_cells_by_log1p', 'mean_log1p', 'pct_dropout_by_log1p', 'total_log1p', 'n_cells', 'highly_variable', 'means', 'dispersions', 'dispersions_norm'
-        uns: 'hvg', 'leiden_res_0.50_v0', 'leiden_res_0.60_v0', 'leiden_res_0.70_v0', 'leiden_res_0.80_v0', 'leiden_res_0.90_v0', 'leiden_res_1.00_v0', 'leiden_res_1.10_v0', 'leiden_res_1.20_v0', 'leiden_res_1.30_v0', 'leiden_res_1.40_v0', 'leiden_res_1.50_v0', 'neighbors', 'pca', 'umap'
-        obsm: 'X_pca', 'X_umap'
-        varm: 'PCs'
-        obsp: 'connectivities', 'distances'
-        layers: None (.X)
-
-``` python
-obs_palettes = {
-    "condition": {"NORM": "#2AABB8", "OIR": "#E87D2A"},
-    "timepoint": {"P14": "#2855A0", "P17": "#D63650"},
-    "sort":      {"Cd73ft": "#C9A227", "WR": "#5DB85D"},
-    "lab":       {"Joyal": "#7B4FB5", "Mccarrol": "#A0522D"},
-    "batch":     {"Cd73ft_Joyal": "#C9A227", "WR_Joyal": "#5DB85D", "WR_Mccarrol": "#A0522D"},
-}
-
+# below the guard, so these take effect on a re-render without re-clustering
 for obs_key, palette in obs_palettes.items():
     categories = cd73ft_joyal.obs[obs_key].cat.categories
     cd73ft_joyal.uns[f"{obs_key}_colors"] = [palette[category] for category in categories]
 
-# cells are drawn in this order, so whatever comes last sits on top. Shuffled, because the
-# matrix order is the order cells came off the sequencer and it buries whole clusters under
-# their neighbours. To put particular clusters on top instead, sort by the cluster column:
-#   draw_order = cd73ft_joyal.obs[ranked_key].sort_values(ascending=False).index
-draw_order = np.random.default_rng(0).permutation(cd73ft_joyal.n_obs)
+draw_order = np.random.default_rng(0).permutation(cd73ft_joyal.n_obs)  # last drawn sits on top
 
-resolution_keys = [column for column in cd73ft_joyal.obs.columns if column.endswith("_v0")]
+resolution_keys = [c for c in cd73ft_joyal.obs.columns if c.endswith("_v0")]  # every resolution swept
 
-for leiden_key_v0 in resolution_keys:
+for leiden_key_v0 in resolution_keys:                # tab20, cycled once past 20 clusters
     categories = cd73ft_joyal.obs[leiden_key_v0].cat.categories
     cd73ft_joyal.uns[f"{leiden_key_v0}_colors"] = [
         mcolors.to_hex(plt.cm.tab20.colors[int(category) % 20]) for category in categories
     ]
+
+cd73ft_joyal
 ```
+
+    AnnData object with n_obs × n_vars = 10329 × 18098
+        obs: 'condition', 'timepoint', 'prep', 'lab', 'replicate', 'batch', 'n_genes_by_log1p', 'total_log1p', 'total_log1p_mt', 'pct_log1p_mt', 'total_log1p_ribo', 'pct_log1p_ribo', 'total_log1p_hb', 'pct_log1p_hb', 'leiden_res_0.50_v0', 'leiden_res_0.60_v0', 'leiden_res_0.70_v0', 'leiden_res_0.80_v0', 'leiden_res_0.90_v0', 'leiden_res_1.00_v0', 'leiden_res_1.10_v0', 'leiden_res_1.20_v0', 'leiden_res_1.30_v0', 'leiden_res_1.40_v0', 'leiden_res_1.50_v0'
+        var: 'mt', 'ribo', 'hb', 'n_cells_by_log1p', 'mean_log1p', 'pct_dropout_by_log1p', 'total_log1p', 'n_cells', 'highly_variable', 'means', 'dispersions', 'dispersions_norm'
+        uns: 'hvg', 'leiden_res_0.50_v0', 'leiden_res_0.60_v0', 'leiden_res_0.70_v0', 'leiden_res_0.80_v0', 'leiden_res_0.90_v0', 'leiden_res_1.00_v0', 'leiden_res_1.10_v0', 'leiden_res_1.20_v0', 'leiden_res_1.30_v0', 'leiden_res_1.40_v0', 'leiden_res_1.50_v0', 'neighbors', 'pca', 'umap', 'condition_colors', 'timepoint_colors', 'prep_colors', 'lab_colors', 'batch_colors', 'leiden_res_0.50_v0_colors', 'leiden_res_0.60_v0_colors', 'leiden_res_0.70_v0_colors', 'leiden_res_0.80_v0_colors', 'leiden_res_0.90_v0_colors', 'leiden_res_1.00_v0_colors', 'leiden_res_1.10_v0_colors', 'leiden_res_1.20_v0_colors', 'leiden_res_1.30_v0_colors', 'leiden_res_1.40_v0_colors', 'leiden_res_1.50_v0_colors'
+        obsm: 'X_pca', 'X_umap'
+        varm: 'PCs'
+        obsp: 'connectivities', 'distances'
+        layers: None (.X)
 
 ## Leiden sweep
 
