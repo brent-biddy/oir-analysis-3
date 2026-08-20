@@ -140,19 +140,13 @@ The object is saved to `data/processed/` and re-used on later renders.
 ## Reference centroids
 
 Now let’s build the reference we’ll annotate against. The mouse retina
-cell atlas holds 330,930 cells across twelve major cell classes, all of
-it healthy retina, so it tells us what a cell type looks like rather
-than what OIR does to it.
+cell atlas holds 330,930 cells across twelve major cell types, all of it
+healthy retina.
 
-To make the centroids we’ll sum each class down to a single profile,
-keeping two layers: the raw counts summed, and CP10K summed. Storing
-sums rather than means lets us take whichever mean we need later without
-going back to the atlas.
-
-We’ll aggregate over the whole atlas rather than only its P14 and P17
-cells. That subset looks like the closer match to our timepoints, but it
-holds no astrocytes at all, only 50 RGCs, and bipolar cells almost
-entirely at P17, so it can’t call several of our clusters.
+To make the centroids we’ll sum the UMI counts for each gene across the
+cells of each cell type, and do the same for CP10K normalized counts.
+We’ll keep both as layers, along with the number of cells in each type,
+so we can calculate the mean later.
 
 ``` python
 centroid_path = Path("data/processed/MRCA_majorclass_centroids.h5ad")
