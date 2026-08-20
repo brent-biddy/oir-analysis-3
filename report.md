@@ -37,11 +37,28 @@ plt.rcParams.update({
 
 ## Download
 
+Now let’s download the two datasets we need: the OIR and normoxia retina
+counts from GEO, and the mouse retina cell atlas we’ll use as an
+annotation reference. Both are saved to `data/raw/`, and later renders
+re-use them rather than downloading again.
+
+The query counts are already normalized, so we’ll use them as they are
+rather than normalizing them ourselves.
+
+- **Query** —
+  [GSE150703](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE150703).
+  Binet *et al.*, Neutrophil extracellular traps target senescent
+  vasculature for tissue remodeling in retinopathy. *Science* **369**,
+  eaay5356 (2020).
+  [doi:10.1126/science.aay5356](https://doi.org/10.1126/science.aay5356)
+- **Reference** — the mouse retina cell atlas (MRCA), via CELLxGENE. Li
+  *et al.*, Comprehensive single-cell atlas of the mouse retina.
+  *iScience* **27**, 109916 (2024).
+  [doi:10.1016/j.isci.2024.109916](https://doi.org/10.1016/j.isci.2024.109916)
+
 ``` python
-# the counts this document analyses, and the annotated reference its cell types are called
-# against. Both are fetched once and left on disk; re-rendering re-uses them.
 source_urls = {
-    "dge": (
+    "query": (
         "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE150nnn/GSE150703/suppl/"
         "GSE150703_retina_NORM_OIR_P14_P17_C57_WR_CD73FT_noamg_normalizedUMI_Count_DGEmatrix.txt.gz"
     ),
@@ -57,19 +74,36 @@ raw_dir.mkdir(parents=True, exist_ok=True)
 source_paths = {}
 for source_name, source_url in source_urls.items():
     source_path = raw_dir / Path(source_url).name
-    if not source_path.exists():
+    if not source_path.exists():               # downloaded once, then re-used on later renders
         urlretrieve(source_url, source_path)
     source_paths[source_name] = source_path
     print(f"{source_name}: {source_path.name}  ({source_path.stat().st_size / 1e6:.0f} MB)")
 
-dge_path = source_paths["dge"]
+query_path = source_paths["query"]
 reference_path = source_paths["reference"]
 ```
 
-    dge: GSE150703_retina_NORM_OIR_P14_P17_C57_WR_CD73FT_noamg_normalizedUMI_Count_DGEmatrix.txt.gz  (236 MB)
+    query: GSE150703_retina_NORM_OIR_P14_P17_C57_WR_CD73FT_noamg_normalizedUMI_Count_DGEmatrix.txt.gz  (236 MB)
     reference: a420c2bf-feeb-48db-a6c7-71f492f23131.h5ad  (3690 MB)
 
 ## Build the AnnData
+
+Next, let’s build an AnnData object from the query counts. The matrix
+comes as genes by cells, so we’ll transpose it and store it sparsely.
+
+Each barcode also encodes the experimental design, so we’ll split it
+into columns:
+
+    OIR_P17_WR_Joyal_r1_AGCTATCAATTT
+    │   │   │  │     │  └── droplet barcode
+    │   │   │  │     └───── replicate
+    │   │   │  └─────────── lab
+    │   │   └────────────── sort
+    │   └────────────────── timepoint
+    └────────────────────── condition
+
+We’ll also combine sort and lab into a batch column, since that pairing
+is what we’ll cluster on.
 
 ``` python
 adata_path = Path("data/processed/GSE150703_adata.h5ad")
@@ -78,7 +112,7 @@ adata_path.parent.mkdir(parents=True, exist_ok=True)
 if adata_path.exists():
     adata = sc.read_h5ad(adata_path)
 else:
-    counts = pd.read_csv(dge_path, sep="\t", index_col=0).T
+    counts = pd.read_csv(query_path, sep="\t", index_col=0).T
 
     adata = ad.AnnData(X=csr_matrix(counts.values))
     adata.obs_names = counts.index.astype(str)
@@ -100,6 +134,8 @@ adata
     AnnData object with n_obs × n_vars = 31271 × 21408
         obs: 'condition', 'timepoint', 'sort', 'lab', 'replicate', 'batch'
         layers: None (.X)
+
+The object is saved to `data/processed/` and re-used on later renders.
 
 ## Reference centroids
 
