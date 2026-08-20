@@ -139,44 +139,51 @@ The object is saved to `data/processed/` and re-used on later renders.
 
 ## Reference centroids
 
+Now let’s build the reference we’ll annotate against. The mouse retina
+cell atlas holds 330,930 cells across twelve major cell classes, all of
+it healthy retina, so it tells us what a cell type looks like rather
+than what OIR does to it.
+
+To make the centroids we’ll sum each class down to a single profile,
+keeping two layers: the raw counts summed, and CP10K summed. Storing
+sums rather than means lets us take whichever mean we need later without
+going back to the atlas.
+
+We’ll aggregate over the whole atlas rather than only its P14 and P17
+cells. That subset looks like the closer match to our timepoints, but it
+holds no astrocytes at all, only 50 RGCs, and bipolar cells almost
+entirely at P17, so it can’t call several of our clusters.
+
 ``` python
-# MRCA, the mouse retina cell atlas (330,930 cells, all of it disease-free):
-# https://doi.org/10.1016/j.isci.2024.109916. Its majorclass column is the level the calls
-# come from — twelve classes, about what 21 clusters can resolve.
-#
-# Aggregated over the whole atlas rather than its P14/P17 cells alone. That subset looks
-# like the right match for this design, but it holds no astrocytes at all, 50 RGCs, and
-# bipolar cells almost only at P17, so it cannot call several of the clusters here.
 centroid_path = Path("data/processed/MRCA_majorclass_centroids.h5ad")
 
-if centroid_path.exists():
+if centroid_path.exists():                     # built once, then read back on later renders
     reference_centroids = sc.read_h5ad(centroid_path)
 else:
-    # the atlas ships a .raw holding a second copy of X — same shape, same 812.8M nonzeros,
-    # 9.8 GB apiece — so a plain read_h5ad loads both and takes this machine past its memory.
-    # Opened backed, nothing is read yet; dropping .raw drops it before it is read; and
-    # to_memory then brings in X alone.
-    reference = sc.read_h5ad(reference_path, backed="r")
-    reference.raw = None
-    reference = reference.to_memory()
+    backed = sc.read_h5ad(reference_path, backed="r")   # nothing read into memory yet
+    reference = ad.AnnData(
+        X=backed.raw.X.to_memory(),            # the atlas keeps its raw counts in .raw
+        obs=backed.obs[["majorclass"]],
+        var=backed.raw.var[["feature_name"]],
+    )
 
-    # down to the two columns the aggregation reads, so the centroids carry the atlas's
-    # thirty-three obs and seven var columns no further than this line
-    reference.obs = reference.obs[["majorclass"]]
-    reference.var = reference.var[["feature_name"]]
+    reference.X.indices = reference.X.indices.astype(np.int32)  # int32 indexes 31,671 columns
+    reference.X.indptr = reference.X.indptr.astype(np.int32)    # and saves 3.3 GB here
 
-    # the indices are narrowed to int32 — they index 31,671 columns, and at this many
-    # nonzeros int64 asks for 3.3 GB more than the job has any use for
-    reference.X.indices = reference.X.indices.astype(np.int32)
-    reference.X.indptr = reference.X.indptr.astype(np.int32)
-
-    reference_centroids = sc.get.aggregate(reference, by="majorclass", func="mean")
-    reference_centroids.X = reference_centroids.layers.pop("mean")
+    counts_sum = sc.get.aggregate(reference, by="majorclass", func="sum")
+    sc.pp.normalize_total(reference, target_sum=1e4)   # counts -> CP10K, in place
+    cp10k_sum = sc.get.aggregate(reference, by="majorclass", func="sum")
     del reference
 
-    # the atlas is keyed on Ensembl ids and the query on upper-cased symbols. Nine symbols
-    # answer to more than one id; those are dropped rather than merged, since there is no
-    # honest way to pick which id the query's column meant.
+    reference_centroids = ad.AnnData(
+        X=cp10k_sum.layers["sum"],
+        obs=pd.DataFrame(index=cp10k_sum.obs_names),
+        var=cp10k_sum.var,
+        layers={"counts": counts_sum.layers["sum"]},
+    )
+    reference_centroids.obs["n_cells"] = cp10k_sum.obs["n_obs_aggregated"].to_numpy()
+
+    # nine symbols answer to more than one Ensembl id, so drop them rather than guess
     symbols = reference_centroids.var["feature_name"].astype(str).str.upper()
     reference_centroids = reference_centroids[:, ~symbols.duplicated(keep=False).to_numpy()].copy()
     reference_centroids.var_names = symbols[~symbols.duplicated(keep=False)].to_numpy()
@@ -187,9 +194,9 @@ reference_centroids
 ```
 
     AnnData object with n_obs × n_vars = 12 × 31653
-        obs: 'majorclass', 'n_obs_aggregated'
+        obs: 'n_cells'
         var: 'feature_name'
-        layers: None (.X)
+        layers: 'counts', None (.X)
 
 # WR_Joyal
 
@@ -533,27 +540,27 @@ reference_correlation.round(3)
 
 |  | AC | Astrocyte | BC | Cone | Endothelial | HC | MG | Microglia | Pericyte | RGC | RPE | Rod |
 |----|----|----|----|----|----|----|----|----|----|----|----|----|
-| 1 | 0.616 | 0.588 | 0.671 | 0.803 | 0.459 | 0.627 | 0.634 | 0.487 | 0.501 | 0.583 | 0.612 | 0.871 |
-| 2 | 0.703 | 0.644 | 0.772 | 0.726 | 0.545 | 0.684 | 0.698 | 0.557 | 0.590 | 0.649 | 0.606 | 0.731 |
-| 3 | 0.638 | 0.572 | 0.675 | 0.759 | 0.462 | 0.628 | 0.640 | 0.447 | 0.510 | 0.587 | 0.581 | 0.806 |
-| 4 | 0.737 | 0.646 | 0.801 | 0.722 | 0.535 | 0.701 | 0.710 | 0.518 | 0.592 | 0.668 | 0.607 | 0.721 |
-| 5 | 0.634 | 0.749 | 0.605 | 0.556 | 0.607 | 0.593 | 0.850 | 0.560 | 0.625 | 0.574 | 0.613 | 0.575 |
-| 6 | 0.592 | 0.557 | 0.629 | 0.742 | 0.452 | 0.605 | 0.608 | 0.471 | 0.494 | 0.549 | 0.624 | 0.797 |
-| 7 | 0.836 | 0.643 | 0.703 | 0.643 | 0.526 | 0.705 | 0.681 | 0.514 | 0.583 | 0.734 | 0.560 | 0.647 |
-| 8 | 0.724 | 0.631 | 0.777 | 0.720 | 0.528 | 0.684 | 0.690 | 0.520 | 0.577 | 0.674 | 0.582 | 0.709 |
-| 9 | 0.600 | 0.555 | 0.637 | 0.754 | 0.440 | 0.606 | 0.614 | 0.449 | 0.496 | 0.546 | 0.602 | 0.808 |
-| 10 | 0.773 | 0.643 | 0.690 | 0.639 | 0.523 | 0.677 | 0.673 | 0.529 | 0.565 | 0.686 | 0.560 | 0.651 |
-| 11 | 0.625 | 0.566 | 0.681 | 0.831 | 0.459 | 0.638 | 0.626 | 0.477 | 0.510 | 0.588 | 0.614 | 0.793 |
-| 12 | 0.681 | 0.605 | 0.747 | 0.704 | 0.507 | 0.669 | 0.666 | 0.510 | 0.561 | 0.631 | 0.579 | 0.698 |
-| 13 | 0.740 | 0.590 | 0.690 | 0.655 | 0.499 | 0.695 | 0.646 | 0.509 | 0.548 | 0.666 | 0.549 | 0.667 |
-| 14 | 0.775 | 0.622 | 0.682 | 0.630 | 0.506 | 0.702 | 0.658 | 0.526 | 0.551 | 0.709 | 0.543 | 0.635 |
-| 15 | 0.717 | 0.593 | 0.627 | 0.593 | 0.466 | 0.670 | 0.625 | 0.500 | 0.515 | 0.764 | 0.503 | 0.596 |
-| 16 | 0.439 | 0.547 | 0.424 | 0.387 | 0.766 | 0.414 | 0.543 | 0.492 | 0.731 | 0.404 | 0.465 | 0.379 |
-| 17 | 0.647 | 0.568 | 0.630 | 0.602 | 0.487 | 0.755 | 0.618 | 0.496 | 0.542 | 0.627 | 0.541 | 0.595 |
-| 18 | 0.358 | 0.542 | 0.369 | 0.369 | 0.506 | 0.371 | 0.427 | 0.773 | 0.446 | 0.361 | 0.412 | 0.374 |
-| 19 | 0.680 | 0.538 | 0.624 | 0.575 | 0.460 | 0.633 | 0.582 | 0.478 | 0.510 | 0.631 | 0.504 | 0.572 |
-| 20 | 0.489 | 0.718 | 0.476 | 0.430 | 0.594 | 0.463 | 0.676 | 0.496 | 0.603 | 0.443 | 0.615 | 0.449 |
-| 21 | 0.522 | 0.643 | 0.465 | 0.426 | 0.554 | 0.473 | 0.696 | 0.467 | 0.568 | 0.474 | 0.597 | 0.449 |
+| 1 | 0.613 | 0.584 | 0.674 | 0.806 | 0.453 | 0.627 | 0.641 | 0.478 | 0.490 | 0.586 | 0.614 | 0.873 |
+| 2 | 0.703 | 0.641 | 0.777 | 0.732 | 0.540 | 0.685 | 0.715 | 0.552 | 0.580 | 0.654 | 0.606 | 0.738 |
+| 3 | 0.637 | 0.569 | 0.680 | 0.764 | 0.457 | 0.629 | 0.654 | 0.442 | 0.498 | 0.591 | 0.583 | 0.813 |
+| 4 | 0.736 | 0.643 | 0.806 | 0.727 | 0.529 | 0.702 | 0.725 | 0.513 | 0.584 | 0.673 | 0.606 | 0.727 |
+| 5 | 0.634 | 0.749 | 0.614 | 0.562 | 0.607 | 0.596 | 0.865 | 0.560 | 0.620 | 0.578 | 0.611 | 0.582 |
+| 6 | 0.591 | 0.553 | 0.633 | 0.745 | 0.448 | 0.605 | 0.621 | 0.465 | 0.485 | 0.553 | 0.625 | 0.801 |
+| 7 | 0.837 | 0.640 | 0.710 | 0.651 | 0.520 | 0.705 | 0.695 | 0.511 | 0.573 | 0.739 | 0.562 | 0.656 |
+| 8 | 0.722 | 0.628 | 0.782 | 0.725 | 0.521 | 0.684 | 0.705 | 0.517 | 0.566 | 0.679 | 0.579 | 0.715 |
+| 9 | 0.600 | 0.551 | 0.638 | 0.755 | 0.432 | 0.606 | 0.629 | 0.445 | 0.485 | 0.549 | 0.603 | 0.810 |
+| 10 | 0.775 | 0.641 | 0.698 | 0.648 | 0.519 | 0.678 | 0.690 | 0.526 | 0.555 | 0.691 | 0.559 | 0.660 |
+| 11 | 0.624 | 0.561 | 0.681 | 0.832 | 0.452 | 0.639 | 0.638 | 0.471 | 0.499 | 0.591 | 0.614 | 0.795 |
+| 12 | 0.679 | 0.602 | 0.751 | 0.709 | 0.500 | 0.670 | 0.681 | 0.507 | 0.550 | 0.635 | 0.577 | 0.704 |
+| 13 | 0.741 | 0.587 | 0.694 | 0.659 | 0.492 | 0.695 | 0.658 | 0.505 | 0.538 | 0.670 | 0.548 | 0.673 |
+| 14 | 0.774 | 0.618 | 0.689 | 0.637 | 0.500 | 0.702 | 0.673 | 0.522 | 0.541 | 0.712 | 0.542 | 0.644 |
+| 15 | 0.718 | 0.591 | 0.636 | 0.604 | 0.464 | 0.670 | 0.639 | 0.498 | 0.505 | 0.767 | 0.503 | 0.608 |
+| 16 | 0.435 | 0.547 | 0.430 | 0.392 | 0.760 | 0.414 | 0.554 | 0.497 | 0.720 | 0.404 | 0.462 | 0.384 |
+| 17 | 0.646 | 0.565 | 0.636 | 0.608 | 0.480 | 0.753 | 0.630 | 0.494 | 0.533 | 0.630 | 0.538 | 0.603 |
+| 18 | 0.359 | 0.540 | 0.375 | 0.375 | 0.510 | 0.373 | 0.443 | 0.778 | 0.442 | 0.364 | 0.410 | 0.378 |
+| 19 | 0.679 | 0.535 | 0.627 | 0.579 | 0.454 | 0.633 | 0.589 | 0.473 | 0.500 | 0.634 | 0.501 | 0.579 |
+| 20 | 0.488 | 0.717 | 0.484 | 0.436 | 0.596 | 0.465 | 0.694 | 0.498 | 0.608 | 0.445 | 0.614 | 0.456 |
+| 21 | 0.522 | 0.642 | 0.471 | 0.431 | 0.553 | 0.475 | 0.714 | 0.469 | 0.564 | 0.477 | 0.595 | 0.454 |
 
 </div>
 
@@ -900,27 +907,27 @@ pd.DataFrame({
 
 |     | cell_type   | cells | correlation | margin | marker call |
 |-----|-------------|-------|-------------|--------|-------------|
-| 1   | Rod         | 2494  | 0.871       | 0.067  | Rods        |
-| 2   | BC          | 1768  | 0.772       | 0.040  | Bipolar     |
-| 3   | Rod         | 1493  | 0.806       | 0.047  | Rods        |
-| 4   | BC          | 1484  | 0.801       | 0.063  | Bipolar     |
-| 5   | MG          | 1227  | 0.850       | 0.101  | Muller Glia |
-| 6   | Rod         | 945   | 0.797       | 0.055  | Rods        |
-| 7   | AC          | 911   | 0.836       | 0.102  | Amacrine    |
-| 8   | BC          | 870   | 0.777       | 0.053  | Bipolar     |
-| 9   | Rod         | 785   | 0.808       | 0.054  | Rods        |
-| 10  | AC          | 702   | 0.773       | 0.083  | Horizontal  |
-| 11  | Cone        | 700   | 0.831       | 0.038  | Cones       |
-| 12  | BC          | 458   | 0.747       | 0.043  | Bipolar     |
-| 13  | AC          | 362   | 0.740       | 0.045  | Amacrine    |
-| 14  | AC          | 306   | 0.775       | 0.066  | Amacrine    |
-| 15  | RGC         | 148   | 0.764       | 0.047  | RGC         |
-| 16  | Endothelial | 106   | 0.766       | 0.035  | Pericytes   |
-| 17  | HC          | 103   | 0.755       | 0.108  | Horizontal  |
-| 18  | Microglia   | 85    | 0.773       | 0.232  | Microglia   |
-| 19  | AC          | 76    | 0.680       | 0.047  | Amacrine    |
-| 20  | Astrocyte   | 64    | 0.718       | 0.042  | Muller Glia |
-| 21  | MG          | 56    | 0.696       | 0.053  | Muller Glia |
+| 1   | Rod         | 2494  | 0.873       | 0.068  | Rods        |
+| 2   | BC          | 1768  | 0.777       | 0.040  | Bipolar     |
+| 3   | Rod         | 1493  | 0.813       | 0.048  | Rods        |
+| 4   | BC          | 1484  | 0.806       | 0.070  | Bipolar     |
+| 5   | MG          | 1227  | 0.865       | 0.116  | Muller Glia |
+| 6   | Rod         | 945   | 0.801       | 0.055  | Rods        |
+| 7   | AC          | 911   | 0.837       | 0.098  | Amacrine    |
+| 8   | BC          | 870   | 0.782       | 0.058  | Bipolar     |
+| 9   | Rod         | 785   | 0.810       | 0.055  | Rods        |
+| 10  | AC          | 702   | 0.775       | 0.076  | Horizontal  |
+| 11  | Cone        | 700   | 0.832       | 0.036  | Cones       |
+| 12  | BC          | 458   | 0.751       | 0.043  | Bipolar     |
+| 13  | AC          | 362   | 0.741       | 0.045  | Amacrine    |
+| 14  | AC          | 306   | 0.774       | 0.062  | Amacrine    |
+| 15  | RGC         | 148   | 0.767       | 0.049  | RGC         |
+| 16  | Endothelial | 106   | 0.760       | 0.040  | Pericytes   |
+| 17  | HC          | 103   | 0.753       | 0.107  | Horizontal  |
+| 18  | Microglia   | 85    | 0.778       | 0.238  | Microglia   |
+| 19  | AC          | 76    | 0.679       | 0.046  | Amacrine    |
+| 20  | Astrocyte   | 64    | 0.717       | 0.023  | Muller Glia |
+| 21  | MG          | 56    | 0.714       | 0.072  | Muller Glia |
 
 </div>
 
@@ -1720,26 +1727,26 @@ reference_correlation.round(3)
 
 |  | AC | Astrocyte | BC | Cone | Endothelial | HC | MG | Microglia | Pericyte | RGC | RPE | Rod |
 |----|----|----|----|----|----|----|----|----|----|----|----|----|
-| 1 | 0.682 | 0.609 | 0.813 | 0.650 | 0.537 | 0.651 | 0.651 | 0.447 | 0.613 | 0.625 | 0.556 | 0.660 |
-| 2 | 0.620 | 0.646 | 0.697 | 0.614 | 0.588 | 0.625 | 0.668 | 0.525 | 0.643 | 0.571 | 0.573 | 0.630 |
-| 3 | 0.526 | 0.741 | 0.505 | 0.464 | 0.624 | 0.531 | 0.815 | 0.530 | 0.660 | 0.502 | 0.571 | 0.516 |
-| 4 | 0.536 | 0.716 | 0.526 | 0.490 | 0.623 | 0.535 | 0.814 | 0.508 | 0.659 | 0.495 | 0.587 | 0.531 |
-| 5 | 0.567 | 0.624 | 0.644 | 0.594 | 0.580 | 0.593 | 0.643 | 0.522 | 0.626 | 0.542 | 0.557 | 0.610 |
-| 6 | 0.590 | 0.625 | 0.676 | 0.617 | 0.584 | 0.610 | 0.651 | 0.517 | 0.640 | 0.562 | 0.560 | 0.632 |
-| 7 | 0.518 | 0.598 | 0.614 | 0.787 | 0.507 | 0.553 | 0.628 | 0.485 | 0.558 | 0.481 | 0.633 | 0.724 |
-| 8 | 0.819 | 0.629 | 0.642 | 0.541 | 0.497 | 0.689 | 0.617 | 0.476 | 0.583 | 0.725 | 0.486 | 0.584 |
-| 9 | 0.578 | 0.630 | 0.671 | 0.609 | 0.562 | 0.615 | 0.650 | 0.513 | 0.619 | 0.546 | 0.561 | 0.620 |
-| 10 | 0.552 | 0.595 | 0.652 | 0.586 | 0.545 | 0.600 | 0.636 | 0.465 | 0.611 | 0.524 | 0.531 | 0.599 |
-| 11 | 0.381 | 0.613 | 0.404 | 0.413 | 0.712 | 0.429 | 0.594 | 0.528 | 0.759 | 0.379 | 0.528 | 0.437 |
-| 12 | 0.513 | 0.573 | 0.486 | 0.423 | 0.496 | 0.486 | 0.518 | 0.533 | 0.516 | 0.480 | 0.448 | 0.444 |
-| 13 | 0.226 | 0.526 | 0.268 | 0.273 | 0.544 | 0.287 | 0.396 | 0.780 | 0.490 | 0.235 | 0.363 | 0.284 |
-| 14 | 0.371 | 0.584 | 0.399 | 0.404 | 0.801 | 0.413 | 0.559 | 0.534 | 0.685 | 0.360 | 0.486 | 0.417 |
-| 15 | 0.447 | 0.682 | 0.437 | 0.431 | 0.599 | 0.447 | 0.702 | 0.516 | 0.609 | 0.415 | 0.594 | 0.459 |
-| 16 | 0.740 | 0.586 | 0.608 | 0.517 | 0.488 | 0.665 | 0.592 | 0.453 | 0.552 | 0.796 | 0.475 | 0.553 |
-| 17 | 0.629 | 0.616 | 0.589 | 0.521 | 0.534 | 0.740 | 0.590 | 0.498 | 0.588 | 0.603 | 0.507 | 0.547 |
-| 18 | 0.444 | 0.767 | 0.440 | 0.402 | 0.614 | 0.466 | 0.691 | 0.517 | 0.624 | 0.420 | 0.543 | 0.439 |
-| 19 | 0.382 | 0.459 | 0.451 | 0.556 | 0.375 | 0.420 | 0.484 | 0.389 | 0.409 | 0.334 | 0.533 | 0.606 |
-| 20 | 0.307 | 0.372 | 0.280 | 0.250 | 0.333 | 0.284 | 0.376 | 0.321 | 0.347 | 0.275 | 0.299 | 0.273 |
+| 1 | 0.677 | 0.608 | 0.822 | 0.660 | 0.535 | 0.654 | 0.660 | 0.438 | 0.606 | 0.632 | 0.554 | 0.668 |
+| 2 | 0.614 | 0.643 | 0.705 | 0.623 | 0.587 | 0.627 | 0.676 | 0.519 | 0.635 | 0.576 | 0.569 | 0.640 |
+| 3 | 0.521 | 0.742 | 0.514 | 0.471 | 0.625 | 0.531 | 0.820 | 0.526 | 0.656 | 0.504 | 0.565 | 0.523 |
+| 4 | 0.532 | 0.717 | 0.535 | 0.499 | 0.624 | 0.538 | 0.822 | 0.504 | 0.655 | 0.498 | 0.582 | 0.539 |
+| 5 | 0.561 | 0.622 | 0.651 | 0.603 | 0.580 | 0.595 | 0.652 | 0.517 | 0.619 | 0.545 | 0.554 | 0.618 |
+| 6 | 0.582 | 0.622 | 0.683 | 0.626 | 0.584 | 0.611 | 0.659 | 0.510 | 0.632 | 0.565 | 0.556 | 0.640 |
+| 7 | 0.514 | 0.594 | 0.620 | 0.793 | 0.507 | 0.557 | 0.636 | 0.477 | 0.551 | 0.486 | 0.632 | 0.729 |
+| 8 | 0.816 | 0.628 | 0.651 | 0.554 | 0.496 | 0.690 | 0.624 | 0.468 | 0.575 | 0.730 | 0.488 | 0.598 |
+| 9 | 0.572 | 0.625 | 0.677 | 0.615 | 0.561 | 0.616 | 0.656 | 0.506 | 0.610 | 0.550 | 0.557 | 0.627 |
+| 10 | 0.545 | 0.591 | 0.656 | 0.592 | 0.539 | 0.600 | 0.640 | 0.458 | 0.600 | 0.526 | 0.526 | 0.605 |
+| 11 | 0.376 | 0.612 | 0.412 | 0.420 | 0.709 | 0.430 | 0.602 | 0.529 | 0.752 | 0.381 | 0.522 | 0.443 |
+| 12 | 0.511 | 0.572 | 0.501 | 0.439 | 0.503 | 0.489 | 0.533 | 0.535 | 0.514 | 0.486 | 0.449 | 0.458 |
+| 13 | 0.223 | 0.523 | 0.278 | 0.282 | 0.553 | 0.289 | 0.408 | 0.783 | 0.487 | 0.237 | 0.359 | 0.291 |
+| 14 | 0.364 | 0.583 | 0.405 | 0.410 | 0.798 | 0.413 | 0.565 | 0.534 | 0.677 | 0.360 | 0.480 | 0.422 |
+| 15 | 0.444 | 0.682 | 0.447 | 0.438 | 0.602 | 0.448 | 0.713 | 0.515 | 0.609 | 0.418 | 0.589 | 0.466 |
+| 16 | 0.734 | 0.584 | 0.618 | 0.533 | 0.486 | 0.664 | 0.599 | 0.447 | 0.544 | 0.799 | 0.475 | 0.571 |
+| 17 | 0.622 | 0.614 | 0.595 | 0.529 | 0.532 | 0.738 | 0.593 | 0.493 | 0.581 | 0.605 | 0.504 | 0.558 |
+| 18 | 0.439 | 0.766 | 0.449 | 0.409 | 0.614 | 0.467 | 0.700 | 0.514 | 0.620 | 0.422 | 0.538 | 0.446 |
+| 19 | 0.382 | 0.457 | 0.458 | 0.564 | 0.379 | 0.426 | 0.495 | 0.385 | 0.404 | 0.340 | 0.534 | 0.611 |
+| 20 | 0.307 | 0.374 | 0.296 | 0.264 | 0.345 | 0.290 | 0.391 | 0.322 | 0.348 | 0.280 | 0.298 | 0.285 |
 
 </div>
 
@@ -2063,26 +2070,26 @@ pd.DataFrame({
 
 |     | cell_type   | cells | correlation | margin | marker call          |
 |-----|-------------|-------|-------------|--------|----------------------|
-| 1   | BC          | 1277  | 0.813       | 0.131  | Bipolar              |
-| 2   | BC          | 1267  | 0.697       | 0.029  | Bipolar              |
-| 3   | MG          | 996   | 0.815       | 0.074  | Muller Glia          |
-| 4   | MG          | 908   | 0.814       | 0.098  | Muller Glia          |
-| 5   | BC          | 820   | 0.644       | 0.001  | Bipolar              |
-| 6   | BC          | 773   | 0.676       | 0.024  | Bipolar              |
-| 7   | Cone        | 742   | 0.787       | 0.063  | Cones                |
-| 8   | AC          | 689   | 0.819       | 0.094  | Amacrine             |
-| 9   | BC          | 635   | 0.671       | 0.020  | Bipolar              |
-| 10  | BC          | 439   | 0.652       | 0.016  | Bipolar              |
-| 11  | Pericyte    | 305   | 0.759       | 0.047  | Pericytes            |
-| 12  | Astrocyte   | 300   | 0.573       | 0.041  | Bipolar              |
-| 13  | Microglia   | 285   | 0.780       | 0.236  | Microglia            |
-| 14  | Endothelial | 215   | 0.801       | 0.116  | Vascular Endothelial |
-| 15  | MG          | 196   | 0.702       | 0.020  | Muller Glia          |
-| 16  | RGC         | 125   | 0.796       | 0.056  | RGC                  |
-| 17  | HC          | 121   | 0.740       | 0.111  | Horizontal           |
-| 18  | Astrocyte   | 113   | 0.767       | 0.076  | Muller Glia          |
-| 19  | Rod         | 80    | 0.606       | 0.050  | Rods                 |
-| 20  | MG          | 43    | 0.376       | 0.004  | Muller Glia          |
+| 1   | BC          | 1277  | 0.822       | 0.145  | Bipolar              |
+| 2   | BC          | 1267  | 0.705       | 0.028  | Bipolar              |
+| 3   | MG          | 996   | 0.820       | 0.078  | Muller Glia          |
+| 4   | MG          | 908   | 0.822       | 0.105  | Muller Glia          |
+| 5   | MG          | 820   | 0.652       | 0.000  | Bipolar              |
+| 6   | BC          | 773   | 0.683       | 0.024  | Bipolar              |
+| 7   | Cone        | 742   | 0.793       | 0.064  | Cones                |
+| 8   | AC          | 689   | 0.816       | 0.086  | Amacrine             |
+| 9   | BC          | 635   | 0.677       | 0.020  | Bipolar              |
+| 10  | BC          | 439   | 0.656       | 0.016  | Bipolar              |
+| 11  | Pericyte    | 305   | 0.752       | 0.044  | Pericytes            |
+| 12  | Astrocyte   | 300   | 0.572       | 0.038  | Bipolar              |
+| 13  | Microglia   | 285   | 0.783       | 0.230  | Microglia            |
+| 14  | Endothelial | 215   | 0.798       | 0.121  | Vascular Endothelial |
+| 15  | MG          | 196   | 0.713       | 0.030  | Muller Glia          |
+| 16  | RGC         | 125   | 0.799       | 0.065  | RGC                  |
+| 17  | HC          | 121   | 0.738       | 0.116  | Horizontal           |
+| 18  | Astrocyte   | 113   | 0.766       | 0.065  | Muller Glia          |
+| 19  | Rod         | 80    | 0.611       | 0.048  | Rods                 |
+| 20  | MG          | 43    | 0.391       | 0.018  | Muller Glia          |
 
 </div>
 
@@ -2210,12 +2217,13 @@ cd73ft_joyal.obs["cell_type"].value_counts()
 ```
 
     cluster    parent child  cells  would move  tradeoff  applied
+          5        MG    BC    820         791    -0.111    False
          12 Astrocyte    BC    300         176    -0.140    False
          18 Astrocyte    MG    113          91    -0.222    False
 
     cell_type
-    BC             5211
-    MG             2143
+    BC             4391
+    MG             2963
     Cone            742
     AC              689
     Astrocyte       413

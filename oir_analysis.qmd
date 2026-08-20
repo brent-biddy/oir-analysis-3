@@ -149,45 +149,49 @@ The object is saved to `data/processed/` and re-used on later renders.
 
 ## Reference centroids
 
+Now let's build the reference we'll annotate against. The mouse retina cell atlas holds 330,930
+cells across twelve major cell classes, all of it healthy retina, so it tells us what a cell type
+looks like rather than what OIR does to it.
+
+To make the centroids we'll sum each class down to a single profile, keeping two layers: the raw
+counts summed, and CP10K summed. Storing sums rather than means lets us take whichever mean we
+need later without going back to the atlas.
+
+We'll aggregate over the whole atlas rather than only its P14 and P17 cells. That subset looks
+like the closer match to our timepoints, but it holds no astrocytes at all, only 50 RGCs, and
+bipolar cells almost entirely at P17, so it can't call several of our clusters.
+
 ```{python}
 #| label: reference-centroids
-# MRCA, the mouse retina cell atlas (330,930 cells, all of it disease-free):
-# https://doi.org/10.1016/j.isci.2024.109916. Its majorclass column is the level the calls
-# come from — twelve classes, about what 21 clusters can resolve.
-#
-# Aggregated over the whole atlas rather than its P14/P17 cells alone. That subset looks
-# like the right match for this design, but it holds no astrocytes at all, 50 RGCs, and
-# bipolar cells almost only at P17, so it cannot call several of the clusters here.
 centroid_path = Path("data/processed/MRCA_majorclass_centroids.h5ad")
 
-if centroid_path.exists():
+if centroid_path.exists():                     # built once, then read back on later renders
     reference_centroids = sc.read_h5ad(centroid_path)
 else:
-    # the atlas ships a .raw holding a second copy of X — same shape, same 812.8M nonzeros,
-    # 9.8 GB apiece — so a plain read_h5ad loads both and takes this machine past its memory.
-    # Opened backed, nothing is read yet; dropping .raw drops it before it is read; and
-    # to_memory then brings in X alone.
-    reference = sc.read_h5ad(reference_path, backed="r")
-    reference.raw = None
-    reference = reference.to_memory()
+    backed = sc.read_h5ad(reference_path, backed="r")   # nothing read into memory yet
+    reference = ad.AnnData(
+        X=backed.raw.X.to_memory(),            # the atlas keeps its raw counts in .raw
+        obs=backed.obs[["majorclass"]],
+        var=backed.raw.var[["feature_name"]],
+    )
 
-    # down to the two columns the aggregation reads, so the centroids carry the atlas's
-    # thirty-three obs and seven var columns no further than this line
-    reference.obs = reference.obs[["majorclass"]]
-    reference.var = reference.var[["feature_name"]]
+    reference.X.indices = reference.X.indices.astype(np.int32)  # int32 indexes 31,671 columns
+    reference.X.indptr = reference.X.indptr.astype(np.int32)    # and saves 3.3 GB here
 
-    # the indices are narrowed to int32 — they index 31,671 columns, and at this many
-    # nonzeros int64 asks for 3.3 GB more than the job has any use for
-    reference.X.indices = reference.X.indices.astype(np.int32)
-    reference.X.indptr = reference.X.indptr.astype(np.int32)
-
-    reference_centroids = sc.get.aggregate(reference, by="majorclass", func="mean")
-    reference_centroids.X = reference_centroids.layers.pop("mean")
+    counts_sum = sc.get.aggregate(reference, by="majorclass", func="sum")
+    sc.pp.normalize_total(reference, target_sum=1e4)   # counts -> CP10K, in place
+    cp10k_sum = sc.get.aggregate(reference, by="majorclass", func="sum")
     del reference
 
-    # the atlas is keyed on Ensembl ids and the query on upper-cased symbols. Nine symbols
-    # answer to more than one id; those are dropped rather than merged, since there is no
-    # honest way to pick which id the query's column meant.
+    reference_centroids = ad.AnnData(
+        X=cp10k_sum.layers["sum"],
+        obs=pd.DataFrame(index=cp10k_sum.obs_names),
+        var=cp10k_sum.var,
+        layers={"counts": counts_sum.layers["sum"]},
+    )
+    reference_centroids.obs["n_cells"] = cp10k_sum.obs["n_obs_aggregated"].to_numpy()
+
+    # nine symbols answer to more than one Ensembl id, so drop them rather than guess
     symbols = reference_centroids.var["feature_name"].astype(str).str.upper()
     reference_centroids = reference_centroids[:, ~symbols.duplicated(keep=False).to_numpy()].copy()
     reference_centroids.var_names = symbols[~symbols.duplicated(keep=False)].to_numpy()
