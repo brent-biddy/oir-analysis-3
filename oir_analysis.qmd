@@ -1660,12 +1660,15 @@ pd.DataFrame({
 ```{python}
 #| label: refine-cell-types-cd73ft-joyal
 # the reference calls a whole cluster one class, so a population that never forms its own
-# cluster cannot be named — the vascular cells here are one cluster of 106 holding both
-# endothelium and pericytes. Where the marker panel says a cluster holds two classes, the
-# cells are split: each goes to whichever of the two scores is higher, provided that score
-# clears zero. score_genes centres a score on a control gene set, so above zero means
-# enriched above background; a cell clearing neither keeps the cluster's call rather than
-# being sent one way on noise.
+# cluster cannot be named. That is not this batch's problem: endothelium (cluster 14, 215
+# cells) and pericytes (cluster 11, 305) each come out on their own here, where in WR_Joyal
+# they share one cluster of 106. The screen runs anyway — a mixed cluster is something to
+# find rather than assume — and the two candidates it turns up are both rejected below.
+#
+# where the marker panel says a cluster holds two classes, the cells are split: each goes to
+# whichever of the two scores is higher, provided that score clears zero. score_genes centres
+# a score on a control gene set, so above zero means enriched above background; a cell
+# clearing neither keeps the cluster's call rather than being sent one way on noise.
 #
 # the assignment itself has no threshold to choose — the two scores are compared against
 # each other — but which clusters get split is gated below, because a disagreement between
@@ -1711,8 +1714,12 @@ cluster_refinements = {
 #
 # the scores have to actually trade off, not merely fail to correlate: a cluster sitting at
 # zero has the two scores independent of each other, which is a cloud rather than an L and
-# says nothing about there being two populations in it. The vascular cluster runs -0.75 and
-# the next candidate ten times weaker, so the cut is set between them rather than at zero.
+# says nothing about there being two populations in it.
+#
+# the cut is the one WR_Joyal's split was set on, kept here rather than retuned per batch —
+# a threshold moved until this batch's candidates fall the right side of it would not be a
+# test any more. Both land well short of it: cluster 12 at -0.14 and cluster 18 at -0.22 are
+# nearer the cloud than the L, and both keep their whole-cluster call.
 max_tradeoff = -0.25
 min_arm_cells = 10
 min_arm_fraction = 0.05
