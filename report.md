@@ -1,25 +1,76 @@
----
-title: "OIR retina scRNA-seq"
-subtitle: "WR_Joyal and Cd73ft_Joyal, analysed the same way"
-author: "Brent Biddy"
-date: today
-format:
-  html:
-    toc: true
-    toc-depth: 3
-    embed-resources: true
-  pptx:
-    slide-level: 2
-    echo: false
-  gfm:
-    output-file: report.md
-    toc: true
-    toc-depth: 3
-jupyter: oir-analysis-3
----
+# OIR retina scRNA-seq
+Brent Biddy
+2026-08-20
 
-```{python}
-#| label: setup
+- [Download](#download)
+- [Build the AnnData](#build-the-anndata)
+- [Reference centroids](#reference-centroids)
+- [WR_Joyal](#wr_joyal)
+  - [Cluster WR_Joyal](#cluster-wr_joyal)
+  - [Leiden sweep](#leiden-sweep)
+  - [Chosen resolution](#chosen-resolution)
+  - [Clusters on the UMAP](#clusters-on-the-umap)
+  - [QC metrics](#qc-metrics)
+  - [QC metrics by cluster](#qc-metrics-by-cluster)
+  - [Correlation with the reference](#correlation-with-the-reference)
+  - [Correlation with the reference by
+    cluster](#correlation-with-the-reference-by-cluster)
+  - [Marker scores](#marker-scores)
+  - [Marker scores by cluster](#marker-scores-by-cluster)
+  - [Marker scores on the UMAP](#marker-scores-on-the-umap)
+  - [Marker genes by cluster](#marker-genes-by-cluster)
+  - [Marker score heatmap](#marker-score-heatmap)
+  - [Preliminary cell types](#preliminary-cell-types)
+  - [Refining a call with the marker
+    scores](#refining-a-call-with-the-marker-scores)
+  - [Cells reassigned by marker
+    score](#cells-reassigned-by-marker-score)
+  - [Preliminary cell types on the
+    UMAP](#preliminary-cell-types-on-the-umap)
+  - [Txn1 on the UMAP](#txn1-on-the-umap)
+  - [Txn1 by cell type](#txn1-by-cell-type)
+  - [Txn1 by cell type and condition](#txn1-by-cell-type-and-condition)
+  - [Txn1 by cell type and timepoint](#txn1-by-cell-type-and-timepoint)
+  - [Txn1 across the design](#txn1-across-the-design)
+  - [Txn1 by cell type across the
+    design](#txn1-by-cell-type-across-the-design)
+  - [Txn1 by cell type across the design, grouped by
+    timepoint](#txn1-by-cell-type-across-the-design-grouped-by-timepoint)
+- [Cd73ft_Joyal](#cd73ft_joyal)
+  - [Cluster Cd73ft_Joyal](#cluster-cd73ft_joyal)
+  - [Leiden sweep](#leiden-sweep-1)
+  - [Chosen resolution](#chosen-resolution-1)
+  - [Clusters on the UMAP](#clusters-on-the-umap-1)
+  - [QC metrics](#qc-metrics-1)
+  - [QC metrics by cluster](#qc-metrics-by-cluster-1)
+  - [Correlation with the reference](#correlation-with-the-reference-1)
+  - [Correlation with the reference by
+    cluster](#correlation-with-the-reference-by-cluster-1)
+  - [Marker scores](#marker-scores-1)
+  - [Marker scores by cluster](#marker-scores-by-cluster-1)
+  - [Marker scores on the UMAP](#marker-scores-on-the-umap-1)
+  - [Marker genes by cluster](#marker-genes-by-cluster-1)
+  - [Marker score heatmap](#marker-score-heatmap-1)
+  - [Preliminary cell types](#preliminary-cell-types-1)
+  - [Refining a call with the marker
+    scores](#refining-a-call-with-the-marker-scores-1)
+  - [Cells reassigned by marker
+    score](#cells-reassigned-by-marker-score-1)
+  - [Preliminary cell types on the
+    UMAP](#preliminary-cell-types-on-the-umap-1)
+  - [Txn1 on the UMAP](#txn1-on-the-umap-1)
+  - [Txn1 by cell type](#txn1-by-cell-type-1)
+  - [Txn1 by cell type and
+    condition](#txn1-by-cell-type-and-condition-1)
+  - [Txn1 by cell type and
+    timepoint](#txn1-by-cell-type-and-timepoint-1)
+  - [Txn1 across the design](#txn1-across-the-design-1)
+  - [Txn1 by cell type across the
+    design](#txn1-by-cell-type-across-the-design-1)
+  - [Txn1 by cell type across the design, grouped by
+    timepoint](#txn1-by-cell-type-across-the-design-grouped-by-timepoint-1)
+
+``` python
 from pathlib import Path
 from urllib.request import urlretrieve
 
@@ -49,8 +100,7 @@ plt.rcParams.update({
 
 ## Download
 
-```{python}
-#| label: download
+``` python
 # the counts this document analyses, and the annotated reference its cell types are called
 # against. Both are fetched once and left on disk; re-rendering re-uses them.
 source_urls = {
@@ -79,10 +129,12 @@ dge_path = source_paths["dge"]
 reference_path = source_paths["reference"]
 ```
 
+    dge: GSE150703_retina_NORM_OIR_P14_P17_C57_WR_CD73FT_noamg_normalizedUMI_Count_DGEmatrix.txt.gz  (236 MB)
+    reference: a420c2bf-feeb-48db-a6c7-71f492f23131.h5ad  (3690 MB)
+
 ## Build the AnnData
 
-```{python}
-#| label: create-anndata
+``` python
 adata_path = Path("data/processed/GSE150703_adata.h5ad")
 adata_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -108,10 +160,13 @@ else:
 adata
 ```
 
+    AnnData object with n_obs × n_vars = 31271 × 21408
+        obs: 'condition', 'timepoint', 'sort', 'lab', 'replicate', 'batch'
+        layers: None (.X)
+
 ## Reference centroids
 
-```{python}
-#| label: reference-centroids
+``` python
 # MRCA, the mouse retina cell atlas (330,930 cells, all of it disease-free):
 # https://doi.org/10.1016/j.isci.2024.109916. Its majorclass column is the level the calls
 # come from — twelve classes, about what 21 clusters can resolve.
@@ -158,12 +213,16 @@ else:
 reference_centroids
 ```
 
+    AnnData object with n_obs × n_vars = 12 × 31653
+        obs: 'majorclass', 'n_obs_aggregated', 'n_cells'
+        var: 'feature_name', 'symbol'
+        layers: None (.X)
+
 # WR_Joyal
 
 ## Cluster WR_Joyal
 
-```{python}
-#| label: cluster-wr-joyal
+``` python
 wr_joyal_clustered_path = Path("data/processed/GSE150703_adata_WR_Joyal_clustered.h5ad")
 
 if wr_joyal_clustered_path.exists():
@@ -206,8 +265,16 @@ else:
 wr_joyal
 ```
 
-```{python}
-#| label: palettes-wr-joyal
+    AnnData object with n_obs × n_vars = 15143 × 19084
+        obs: 'condition', 'timepoint', 'sort', 'lab', 'replicate', 'batch', 'n_genes_by_log1p', 'total_log1p', 'total_log1p_mt', 'pct_log1p_mt', 'total_log1p_ribo', 'pct_log1p_ribo', 'total_log1p_hb', 'pct_log1p_hb', 'leiden_res_0.50_v0', 'leiden_res_0.60_v0', 'leiden_res_0.70_v0', 'leiden_res_0.80_v0', 'leiden_res_0.90_v0', 'leiden_res_1.00_v0', 'leiden_res_1.10_v0', 'leiden_res_1.20_v0', 'leiden_res_1.30_v0', 'leiden_res_1.40_v0', 'leiden_res_1.50_v0'
+        var: 'mt', 'ribo', 'hb', 'n_cells_by_log1p', 'mean_log1p', 'pct_dropout_by_log1p', 'total_log1p', 'n_cells', 'highly_variable', 'means', 'dispersions', 'dispersions_norm'
+        uns: 'hvg', 'leiden_res_0.50_v0', 'leiden_res_0.60_v0', 'leiden_res_0.70_v0', 'leiden_res_0.80_v0', 'leiden_res_0.90_v0', 'leiden_res_1.00_v0', 'leiden_res_1.10_v0', 'leiden_res_1.20_v0', 'leiden_res_1.30_v0', 'leiden_res_1.40_v0', 'leiden_res_1.50_v0', 'neighbors', 'pca', 'umap'
+        obsm: 'X_pca', 'X_umap'
+        varm: 'PCs'
+        obsp: 'connectivities', 'distances'
+        layers: None (.X)
+
+``` python
 obs_palettes = {
     "condition": {"NORM": "#2AABB8", "OIR": "#E87D2A"},
     "timepoint": {"P14": "#2855A0", "P17": "#D63650"},
@@ -237,8 +304,7 @@ for leiden_key_v0 in resolution_keys:
 
 ## Leiden sweep
 
-```{python}
-#| label: umap-sweep-wr-joyal
+``` python
 for start in range(0, len(resolution_keys), 3):
     group = resolution_keys[start:start + 3]
 
@@ -268,10 +334,25 @@ for start in range(0, len(resolution_keys), 3):
     plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/umap-sweep-wr-joyal-output-1.png"
+id="umap-sweep-wr-joyal-1" />
+
+<img
+src="oir_analysis_files/figure-commonmark/umap-sweep-wr-joyal-output-2.png"
+id="umap-sweep-wr-joyal-2" />
+
+<img
+src="oir_analysis_files/figure-commonmark/umap-sweep-wr-joyal-output-3.png"
+id="umap-sweep-wr-joyal-3" />
+
+<img
+src="oir_analysis_files/figure-commonmark/umap-sweep-wr-joyal-output-4.png"
+id="umap-sweep-wr-joyal-4" />
+
 ## Chosen resolution
 
-```{python}
-#| label: choose-resolution-wr-joyal
+``` python
 wr_joyal_resolution = 1.0
 
 leiden_key = f"leiden_res_{wr_joyal_resolution:.2f}_v0"
@@ -296,10 +377,35 @@ print(f"{ranked_key}: {wr_joyal.obs[ranked_key].nunique()} clusters")
 wr_joyal.obs[ranked_key].value_counts()
 ```
 
+    leiden_res_1.00_v1: 21 clusters
+
+    leiden_res_1.00_v1
+    1     2494
+    2     1768
+    3     1493
+    4     1484
+    5     1227
+    6      945
+    7      911
+    8      870
+    9      785
+    10     702
+    11     700
+    12     458
+    13     362
+    14     306
+    15     148
+    16     106
+    17     103
+    18      85
+    19      76
+    20      64
+    21      56
+    Name: count, dtype: int64
+
 ## Clusters on the UMAP
 
-```{python}
-#| label: umap-clusters-wr-joyal
+``` python
 # scanpy builds the figure here, and takes no figsize argument, so rcParams is where its size
 # has to be set
 plt.rcParams["figure.figsize"] = (5.0, 4.3)
@@ -316,10 +422,13 @@ ax.set_aspect("equal", adjustable="datalim")
 plt.show()
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/umap-clusters-wr-joyal-output-1.png"
+id="umap-clusters-wr-joyal" />
+
 ## QC metrics
 
-```{python}
-#| label: qc-violin-wr-joyal
+``` python
 qc_metrics = {
     "n_genes_by_log1p": "Genes detected",
     "total_log1p": "Total expression",
@@ -347,10 +456,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/qc-violin-wr-joyal-output-1.png"
+id="qc-violin-wr-joyal" />
+
 ## QC metrics by cluster
 
-```{python}
-#| label: qc-violin-by-cluster-wr-joyal
+``` python
 # only scanpy reads the _colors entry out of uns, so the palette is handed to seaborn
 # explicitly — otherwise a cluster changes color between the UMAP and these violins
 cluster_palette = dict(zip(wr_joyal.obs[ranked_key].cat.categories, wr_joyal.uns[f"{ranked_key}_colors"]))
@@ -384,10 +496,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/qc-violin-by-cluster-wr-joyal-output-1.png"
+id="qc-violin-by-cluster-wr-joyal" />
+
 ## Correlation with the reference
 
-```{python}
-#| label: correlate-reference-wr-joyal
+``` python
 # correlated over the query's variable genes rather than everything shared: the
 # housekeeping bulk is near-identical in every class and only lifts all twelve correlations
 # together, flattening the differences the call is made on
@@ -428,10 +543,50 @@ print(f"{len(feature_genes)} of {int(wr_joyal.var['highly_variable'].sum())} "
 reference_correlation.round(3)
 ```
 
+    1618 of 2000 variable genes found in the reference
+
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+&#10;    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+&#10;    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+
+|  | AC | Astrocyte | BC | Cone | Endothelial | HC | MG | Microglia | Pericyte | RGC | RPE | Rod |
+|----|----|----|----|----|----|----|----|----|----|----|----|----|
+| 1 | 0.616 | 0.588 | 0.671 | 0.803 | 0.459 | 0.627 | 0.634 | 0.487 | 0.501 | 0.583 | 0.612 | 0.871 |
+| 2 | 0.703 | 0.644 | 0.772 | 0.726 | 0.545 | 0.684 | 0.698 | 0.557 | 0.590 | 0.649 | 0.606 | 0.731 |
+| 3 | 0.638 | 0.572 | 0.675 | 0.759 | 0.462 | 0.628 | 0.640 | 0.447 | 0.510 | 0.587 | 0.581 | 0.806 |
+| 4 | 0.737 | 0.646 | 0.801 | 0.722 | 0.535 | 0.701 | 0.710 | 0.518 | 0.592 | 0.668 | 0.607 | 0.721 |
+| 5 | 0.634 | 0.749 | 0.605 | 0.556 | 0.607 | 0.593 | 0.850 | 0.560 | 0.625 | 0.574 | 0.613 | 0.575 |
+| 6 | 0.592 | 0.557 | 0.629 | 0.742 | 0.452 | 0.605 | 0.608 | 0.471 | 0.494 | 0.549 | 0.624 | 0.797 |
+| 7 | 0.836 | 0.643 | 0.703 | 0.643 | 0.526 | 0.705 | 0.681 | 0.514 | 0.583 | 0.734 | 0.560 | 0.647 |
+| 8 | 0.724 | 0.631 | 0.777 | 0.720 | 0.528 | 0.684 | 0.690 | 0.520 | 0.577 | 0.674 | 0.582 | 0.709 |
+| 9 | 0.600 | 0.555 | 0.637 | 0.754 | 0.440 | 0.606 | 0.614 | 0.449 | 0.496 | 0.546 | 0.602 | 0.808 |
+| 10 | 0.773 | 0.643 | 0.690 | 0.639 | 0.523 | 0.677 | 0.673 | 0.529 | 0.565 | 0.686 | 0.560 | 0.651 |
+| 11 | 0.625 | 0.566 | 0.681 | 0.831 | 0.459 | 0.638 | 0.626 | 0.477 | 0.510 | 0.588 | 0.614 | 0.793 |
+| 12 | 0.681 | 0.605 | 0.747 | 0.704 | 0.507 | 0.669 | 0.666 | 0.510 | 0.561 | 0.631 | 0.579 | 0.698 |
+| 13 | 0.740 | 0.590 | 0.690 | 0.655 | 0.499 | 0.695 | 0.646 | 0.509 | 0.548 | 0.666 | 0.549 | 0.667 |
+| 14 | 0.775 | 0.622 | 0.682 | 0.630 | 0.506 | 0.702 | 0.658 | 0.526 | 0.551 | 0.709 | 0.543 | 0.635 |
+| 15 | 0.717 | 0.593 | 0.627 | 0.593 | 0.466 | 0.670 | 0.625 | 0.500 | 0.515 | 0.764 | 0.503 | 0.596 |
+| 16 | 0.439 | 0.547 | 0.424 | 0.387 | 0.766 | 0.414 | 0.543 | 0.492 | 0.731 | 0.404 | 0.465 | 0.379 |
+| 17 | 0.647 | 0.568 | 0.630 | 0.602 | 0.487 | 0.755 | 0.618 | 0.496 | 0.542 | 0.627 | 0.541 | 0.595 |
+| 18 | 0.358 | 0.542 | 0.369 | 0.369 | 0.506 | 0.371 | 0.427 | 0.773 | 0.446 | 0.361 | 0.412 | 0.374 |
+| 19 | 0.680 | 0.538 | 0.624 | 0.575 | 0.460 | 0.633 | 0.582 | 0.478 | 0.510 | 0.631 | 0.504 | 0.572 |
+| 20 | 0.489 | 0.718 | 0.476 | 0.430 | 0.594 | 0.463 | 0.676 | 0.496 | 0.603 | 0.443 | 0.615 | 0.449 |
+| 21 | 0.522 | 0.643 | 0.465 | 0.426 | 0.554 | 0.473 | 0.696 | 0.467 | 0.568 | 0.474 | 0.597 | 0.449 |
+
+</div>
+
 ## Correlation with the reference by cluster
 
-```{python}
-#| label: heatmap-reference-wr-joyal
+``` python
 # the same matrix three ways, matching the marker heatmap. The raw correlations sit in a
 # narrow band, so the two scaled panels are what can actually be read: down a column asks
 # "which cluster is most this class", and across a row asks "which class best fits this
@@ -486,10 +641,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/heatmap-reference-wr-joyal-output-1.png"
+id="heatmap-reference-wr-joyal" />
+
 ## Marker scores
 
-```{python}
-#| label: score-markers-wr-joyal
+``` python
 retina_markers = {
     "Rods": ["Rho", "Pde6b", "Nrl", "Nr2e3"],
     "Cones": ["Opn1mw", "Opn1sw", "Arr3", "Thrb"],
@@ -515,10 +673,21 @@ for cell_type, genes in retina_markers.items():
     print(f"{cell_type}: {len(present)}/{len(genes)} markers")
 ```
 
+    Rods: 4/4 markers
+    Cones: 4/4 markers
+    RGC: 4/4 markers
+    Amacrine: 4/4 markers
+    Bipolar: 4/4 markers
+    Horizontal: 4/4 markers
+    Muller_Glia: 4/4 markers
+    Microglia: 4/4 markers
+    Vascular_Endothelial: 3/3 markers
+    Pericytes: 3/3 markers
+    Astrocytes: 3/3 markers
+
 ## Marker scores by cluster
 
-```{python}
-#| label: score-violin-by-cluster-wr-joyal
+``` python
 score_df = sc.get.obs_df(wr_joyal, keys=[ranked_key] + score_keys)
 
 for start in range(0, len(score_keys), 6):
@@ -550,10 +719,17 @@ for start in range(0, len(score_keys), 6):
     plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/score-violin-by-cluster-wr-joyal-output-1.png"
+id="score-violin-by-cluster-wr-joyal-1" />
+
+<img
+src="oir_analysis_files/figure-commonmark/score-violin-by-cluster-wr-joyal-output-2.png"
+id="score-violin-by-cluster-wr-joyal-2" />
+
 ## Marker scores on the UMAP
 
-```{python}
-#| label: umap-scores-wr-joyal
+``` python
 for start in range(0, len(score_keys), 3):
     group = score_keys[start:start + 3]
 
@@ -593,19 +769,37 @@ for start in range(0, len(score_keys), 3):
     plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/umap-scores-wr-joyal-output-1.png"
+id="umap-scores-wr-joyal-1" />
+
+<img
+src="oir_analysis_files/figure-commonmark/umap-scores-wr-joyal-output-2.png"
+id="umap-scores-wr-joyal-2" />
+
+<img
+src="oir_analysis_files/figure-commonmark/umap-scores-wr-joyal-output-3.png"
+id="umap-scores-wr-joyal-3" />
+
+<img
+src="oir_analysis_files/figure-commonmark/umap-scores-wr-joyal-output-4.png"
+id="umap-scores-wr-joyal-4" />
+
 ## Marker genes by cluster
 
-```{python}
-#| label: dotplot-markers-wr-joyal
+``` python
 # figsize is deliberately not passed: dotplot derives its own from the gene and cluster counts,
 # and forcing it to slide dimensions packs 41 genes across 21 clusters until the dots overlap
 sc.pl.dotplot(wr_joyal, markers_present, groupby=ranked_key, standard_scale="var")
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/dotplot-markers-wr-joyal-output-1.png"
+id="dotplot-markers-wr-joyal" />
+
 ## Marker score heatmap
 
-```{python}
-#| label: heatmap-scores-wr-joyal
+``` python
 mean_scores = score_df.groupby(ranked_key, observed=True)[score_keys].mean()
 mean_scores.columns = [cell_type.replace("_", " ") for cell_type in retina_markers]
 
@@ -652,10 +846,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/heatmap-scores-wr-joyal-output-1.png"
+id="heatmap-scores-wr-joyal" />
+
 ## Preliminary cell types
 
-```{python}
-#| label: annotate-clusters-wr-joyal
+``` python
 # the call is the best-correlating reference class. The marker scores stay in the document
 # as an independent read on the same question — where the two disagree, the disagreement is
 # the thing to look at before writing an override.
@@ -715,10 +912,48 @@ pd.DataFrame({
 })
 ```
 
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+&#10;    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+&#10;    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+
+|     | cell_type   | cells | correlation | margin | marker call |
+|-----|-------------|-------|-------------|--------|-------------|
+| 1   | Rod         | 2494  | 0.871       | 0.067  | Rods        |
+| 2   | BC          | 1768  | 0.772       | 0.040  | Bipolar     |
+| 3   | Rod         | 1493  | 0.806       | 0.047  | Rods        |
+| 4   | BC          | 1484  | 0.801       | 0.063  | Bipolar     |
+| 5   | MG          | 1227  | 0.850       | 0.101  | Muller Glia |
+| 6   | Rod         | 945   | 0.797       | 0.055  | Rods        |
+| 7   | AC          | 911   | 0.836       | 0.102  | Amacrine    |
+| 8   | BC          | 870   | 0.777       | 0.053  | Bipolar     |
+| 9   | Rod         | 785   | 0.808       | 0.054  | Rods        |
+| 10  | AC          | 702   | 0.773       | 0.083  | Horizontal  |
+| 11  | Cone        | 700   | 0.831       | 0.038  | Cones       |
+| 12  | BC          | 458   | 0.747       | 0.043  | Bipolar     |
+| 13  | AC          | 362   | 0.740       | 0.045  | Amacrine    |
+| 14  | AC          | 306   | 0.775       | 0.066  | Amacrine    |
+| 15  | RGC         | 148   | 0.764       | 0.047  | RGC         |
+| 16  | Endothelial | 106   | 0.766       | 0.035  | Pericytes   |
+| 17  | HC          | 103   | 0.755       | 0.108  | Horizontal  |
+| 18  | Microglia   | 85    | 0.773       | 0.232  | Microglia   |
+| 19  | AC          | 76    | 0.680       | 0.047  | Amacrine    |
+| 20  | Astrocyte   | 64    | 0.718       | 0.042  | Muller Glia |
+| 21  | MG          | 56    | 0.696       | 0.053  | Muller Glia |
+
+</div>
+
 ## Refining a call with the marker scores
 
-```{python}
-#| label: refine-cell-types-wr-joyal
+``` python
 # the reference calls a whole cluster one class, so a population that never forms its own
 # cluster cannot be named — the vascular cells here are one cluster of 106 holding both
 # endothelium and pericytes. Where the marker panel says a cluster holds two classes, the
@@ -832,10 +1067,28 @@ wr_joyal.uns["cell_type_colors"] = [
 wr_joyal.obs["cell_type"].value_counts()
 ```
 
+    cluster      parent    child  cells  would move  tradeoff  applied
+         10          AC       HC    702         284    -0.072    False
+         16 Endothelial Pericyte    106          52    -0.747     True
+         20   Astrocyte       MG     64          56     0.214    False
+
+    cell_type
+    Rod            5717
+    BC             4580
+    AC             2357
+    MG             1283
+    Cone            700
+    RGC             148
+    HC              103
+    Microglia        85
+    Astrocyte        64
+    Endothelial      54
+    Pericyte         52
+    Name: count, dtype: int64
+
 ## Cells reassigned by marker score
 
-```{python}
-#| label: refine-scatter-wr-joyal
+``` python
 # the two scores against each other, one panel per refinement. A cluster worth splitting
 # looks like an L — each arm high on one score and flat on the other, with the middle
 # empty. A diffuse cloud across the diagonal means the two classes are not separable this
@@ -878,10 +1131,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/refine-scatter-wr-joyal-output-1.png"
+id="refine-scatter-wr-joyal" />
+
 ## Preliminary cell types on the UMAP
 
-```{python}
-#| label: umap-cell-types-wr-joyal
+``` python
 plt.rcParams["figure.figsize"] = (6.5, 4.3)
 
 ax = sc.pl.umap(
@@ -894,10 +1150,13 @@ ax.set_aspect("equal", adjustable="datalim")
 plt.show()
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/umap-cell-types-wr-joyal-output-1.png"
+id="umap-cell-types-wr-joyal" />
+
 ## Txn1 on the UMAP
 
-```{python}
-#| label: umap-txn1-wr-joyal
+``` python
 fig, axs = plt.subplots(2, 1, height_ratios=[1, 0.22], figsize=(4.3, 3.9),
                         constrained_layout=True)
 
@@ -918,10 +1177,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/umap-txn1-wr-joyal-output-1.png"
+id="umap-txn1-wr-joyal" />
+
 ## Txn1 by cell type
 
-```{python}
-#| label: txn1-violin-celltype-wr-joyal
+``` python
 txn1_df = sc.get.obs_df(wr_joyal, keys=["TXN1", "cell_type", "condition", "timepoint"])
 
 fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
@@ -952,10 +1214,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/txn1-violin-celltype-wr-joyal-output-1.png"
+id="txn1-violin-celltype-wr-joyal" />
+
 ## Txn1 by cell type and condition
 
-```{python}
-#| label: txn1-violin-condition-wr-joyal
+``` python
 condition_palette = dict(zip(wr_joyal.obs["condition"].cat.categories,
                              wr_joyal.uns["condition_colors"]))
 
@@ -977,10 +1242,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/txn1-violin-condition-wr-joyal-output-1.png"
+id="txn1-violin-condition-wr-joyal" />
+
 ## Txn1 by cell type and timepoint
 
-```{python}
-#| label: txn1-violin-timepoint-wr-joyal
+``` python
 timepoint_palette = dict(zip(wr_joyal.obs["timepoint"].cat.categories,
                              wr_joyal.uns["timepoint_colors"]))
 
@@ -1002,10 +1270,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/txn1-violin-timepoint-wr-joyal-output-1.png"
+id="txn1-violin-timepoint-wr-joyal" />
+
 ## Txn1 across the design
 
-```{python}
-#| label: umap-txn1-stratified-wr-joyal
+``` python
 # laid out like the violin slides below: timepoint down the rows, condition across the
 # columns, so the same comparison sits in the same direction in every Txn1 figure
 condition_order = list(wr_joyal.obs["condition"].cat.categories)
@@ -1052,10 +1323,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/umap-txn1-stratified-wr-joyal-output-1.png"
+id="umap-txn1-stratified-wr-joyal" />
+
 ## Txn1 by cell type across the design
 
-```{python}
-#| label: txn1-violin-stratified-wr-joyal
+``` python
 cell_type_order = list(wr_joyal.obs["cell_type"].cat.categories)
 condition_order = list(wr_joyal.obs["condition"].cat.categories)
 timepoints = list(wr_joyal.obs["timepoint"].cat.categories)
@@ -1089,10 +1363,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/txn1-violin-stratified-wr-joyal-output-1.png"
+id="txn1-violin-stratified-wr-joyal" />
+
 ## Txn1 by cell type across the design, grouped by timepoint
 
-```{python}
-#| label: txn1-violin-stratified-by-condition-wr-joyal
+``` python
 timepoint_palette = dict(zip(wr_joyal.obs["timepoint"].cat.categories,
                              wr_joyal.uns["timepoint_colors"]))
 
@@ -1125,12 +1402,15 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/txn1-violin-stratified-by-condition-wr-joyal-output-1.png"
+id="txn1-violin-stratified-by-condition-wr-joyal" />
+
 # Cd73ft_Joyal
 
 ## Cluster Cd73ft_Joyal
 
-```{python}
-#| label: cluster-cd73ft-joyal
+``` python
 cd73ft_joyal_clustered_path = Path("data/processed/GSE150703_adata_Cd73ft_Joyal_clustered.h5ad")
 
 if cd73ft_joyal_clustered_path.exists():
@@ -1173,8 +1453,16 @@ else:
 cd73ft_joyal
 ```
 
-```{python}
-#| label: palettes-cd73ft-joyal
+    AnnData object with n_obs × n_vars = 10329 × 18098
+        obs: 'condition', 'timepoint', 'sort', 'lab', 'replicate', 'batch', 'n_genes_by_log1p', 'total_log1p', 'total_log1p_mt', 'pct_log1p_mt', 'total_log1p_ribo', 'pct_log1p_ribo', 'total_log1p_hb', 'pct_log1p_hb', 'leiden_res_0.50_v0', 'leiden_res_0.60_v0', 'leiden_res_0.70_v0', 'leiden_res_0.80_v0', 'leiden_res_0.90_v0', 'leiden_res_1.00_v0', 'leiden_res_1.10_v0', 'leiden_res_1.20_v0', 'leiden_res_1.30_v0', 'leiden_res_1.40_v0', 'leiden_res_1.50_v0'
+        var: 'mt', 'ribo', 'hb', 'n_cells_by_log1p', 'mean_log1p', 'pct_dropout_by_log1p', 'total_log1p', 'n_cells', 'highly_variable', 'means', 'dispersions', 'dispersions_norm'
+        uns: 'hvg', 'leiden_res_0.50_v0', 'leiden_res_0.60_v0', 'leiden_res_0.70_v0', 'leiden_res_0.80_v0', 'leiden_res_0.90_v0', 'leiden_res_1.00_v0', 'leiden_res_1.10_v0', 'leiden_res_1.20_v0', 'leiden_res_1.30_v0', 'leiden_res_1.40_v0', 'leiden_res_1.50_v0', 'neighbors', 'pca', 'umap'
+        obsm: 'X_pca', 'X_umap'
+        varm: 'PCs'
+        obsp: 'connectivities', 'distances'
+        layers: None (.X)
+
+``` python
 obs_palettes = {
     "condition": {"NORM": "#2AABB8", "OIR": "#E87D2A"},
     "timepoint": {"P14": "#2855A0", "P17": "#D63650"},
@@ -1204,8 +1492,7 @@ for leiden_key_v0 in resolution_keys:
 
 ## Leiden sweep
 
-```{python}
-#| label: umap-sweep-cd73ft-joyal
+``` python
 for start in range(0, len(resolution_keys), 3):
     group = resolution_keys[start:start + 3]
 
@@ -1235,10 +1522,25 @@ for start in range(0, len(resolution_keys), 3):
     plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/umap-sweep-cd73ft-joyal-output-1.png"
+id="umap-sweep-cd73ft-joyal-1" />
+
+<img
+src="oir_analysis_files/figure-commonmark/umap-sweep-cd73ft-joyal-output-2.png"
+id="umap-sweep-cd73ft-joyal-2" />
+
+<img
+src="oir_analysis_files/figure-commonmark/umap-sweep-cd73ft-joyal-output-3.png"
+id="umap-sweep-cd73ft-joyal-3" />
+
+<img
+src="oir_analysis_files/figure-commonmark/umap-sweep-cd73ft-joyal-output-4.png"
+id="umap-sweep-cd73ft-joyal-4" />
+
 ## Chosen resolution
 
-```{python}
-#| label: choose-resolution-cd73ft-joyal
+``` python
 cd73ft_joyal_resolution = 1.0
 
 leiden_key = f"leiden_res_{cd73ft_joyal_resolution:.2f}_v0"
@@ -1263,10 +1565,34 @@ print(f"{ranked_key}: {cd73ft_joyal.obs[ranked_key].nunique()} clusters")
 cd73ft_joyal.obs[ranked_key].value_counts()
 ```
 
+    leiden_res_1.00_v1: 20 clusters
+
+    leiden_res_1.00_v1
+    1     1277
+    2     1267
+    3      996
+    4      908
+    5      820
+    6      773
+    7      742
+    8      689
+    9      635
+    10     439
+    11     305
+    12     300
+    13     285
+    14     215
+    15     196
+    16     125
+    17     121
+    18     113
+    19      80
+    20      43
+    Name: count, dtype: int64
+
 ## Clusters on the UMAP
 
-```{python}
-#| label: umap-clusters-cd73ft-joyal
+``` python
 # scanpy builds the figure here, and takes no figsize argument, so rcParams is where its size
 # has to be set
 plt.rcParams["figure.figsize"] = (5.0, 4.3)
@@ -1283,10 +1609,13 @@ ax.set_aspect("equal", adjustable="datalim")
 plt.show()
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/umap-clusters-cd73ft-joyal-output-1.png"
+id="umap-clusters-cd73ft-joyal" />
+
 ## QC metrics
 
-```{python}
-#| label: qc-violin-cd73ft-joyal
+``` python
 qc_metrics = {
     "n_genes_by_log1p": "Genes detected",
     "total_log1p": "Total expression",
@@ -1314,10 +1643,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/qc-violin-cd73ft-joyal-output-1.png"
+id="qc-violin-cd73ft-joyal" />
+
 ## QC metrics by cluster
 
-```{python}
-#| label: qc-violin-by-cluster-cd73ft-joyal
+``` python
 # only scanpy reads the _colors entry out of uns, so the palette is handed to seaborn
 # explicitly — otherwise a cluster changes color between the UMAP and these violins
 cluster_palette = dict(zip(cd73ft_joyal.obs[ranked_key].cat.categories, cd73ft_joyal.uns[f"{ranked_key}_colors"]))
@@ -1351,10 +1683,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/qc-violin-by-cluster-cd73ft-joyal-output-1.png"
+id="qc-violin-by-cluster-cd73ft-joyal" />
+
 ## Correlation with the reference
 
-```{python}
-#| label: correlate-reference-cd73ft-joyal
+``` python
 # correlated over the query's variable genes rather than everything shared: the
 # housekeeping bulk is near-identical in every class and only lifts all twelve correlations
 # together, flattening the differences the call is made on
@@ -1395,10 +1730,49 @@ print(f"{len(feature_genes)} of {int(cd73ft_joyal.var['highly_variable'].sum())}
 reference_correlation.round(3)
 ```
 
+    1736 of 2000 variable genes found in the reference
+
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+&#10;    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+&#10;    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+
+|  | AC | Astrocyte | BC | Cone | Endothelial | HC | MG | Microglia | Pericyte | RGC | RPE | Rod |
+|----|----|----|----|----|----|----|----|----|----|----|----|----|
+| 1 | 0.682 | 0.609 | 0.813 | 0.650 | 0.537 | 0.651 | 0.651 | 0.447 | 0.613 | 0.625 | 0.556 | 0.660 |
+| 2 | 0.620 | 0.646 | 0.697 | 0.614 | 0.588 | 0.625 | 0.668 | 0.525 | 0.643 | 0.571 | 0.573 | 0.630 |
+| 3 | 0.526 | 0.741 | 0.505 | 0.464 | 0.624 | 0.531 | 0.815 | 0.530 | 0.660 | 0.502 | 0.571 | 0.516 |
+| 4 | 0.536 | 0.716 | 0.526 | 0.490 | 0.623 | 0.535 | 0.814 | 0.508 | 0.659 | 0.495 | 0.587 | 0.531 |
+| 5 | 0.567 | 0.624 | 0.644 | 0.594 | 0.580 | 0.593 | 0.643 | 0.522 | 0.626 | 0.542 | 0.557 | 0.610 |
+| 6 | 0.590 | 0.625 | 0.676 | 0.617 | 0.584 | 0.610 | 0.651 | 0.517 | 0.640 | 0.562 | 0.560 | 0.632 |
+| 7 | 0.518 | 0.598 | 0.614 | 0.787 | 0.507 | 0.553 | 0.628 | 0.485 | 0.558 | 0.481 | 0.633 | 0.724 |
+| 8 | 0.819 | 0.629 | 0.642 | 0.541 | 0.497 | 0.689 | 0.617 | 0.476 | 0.583 | 0.725 | 0.486 | 0.584 |
+| 9 | 0.578 | 0.630 | 0.671 | 0.609 | 0.562 | 0.615 | 0.650 | 0.513 | 0.619 | 0.546 | 0.561 | 0.620 |
+| 10 | 0.552 | 0.595 | 0.652 | 0.586 | 0.545 | 0.600 | 0.636 | 0.465 | 0.611 | 0.524 | 0.531 | 0.599 |
+| 11 | 0.381 | 0.613 | 0.404 | 0.413 | 0.712 | 0.429 | 0.594 | 0.528 | 0.759 | 0.379 | 0.528 | 0.437 |
+| 12 | 0.513 | 0.573 | 0.486 | 0.423 | 0.496 | 0.486 | 0.518 | 0.533 | 0.516 | 0.480 | 0.448 | 0.444 |
+| 13 | 0.226 | 0.526 | 0.268 | 0.273 | 0.544 | 0.287 | 0.396 | 0.780 | 0.490 | 0.235 | 0.363 | 0.284 |
+| 14 | 0.371 | 0.584 | 0.399 | 0.404 | 0.801 | 0.413 | 0.559 | 0.534 | 0.685 | 0.360 | 0.486 | 0.417 |
+| 15 | 0.447 | 0.682 | 0.437 | 0.431 | 0.599 | 0.447 | 0.702 | 0.516 | 0.609 | 0.415 | 0.594 | 0.459 |
+| 16 | 0.740 | 0.586 | 0.608 | 0.517 | 0.488 | 0.665 | 0.592 | 0.453 | 0.552 | 0.796 | 0.475 | 0.553 |
+| 17 | 0.629 | 0.616 | 0.589 | 0.521 | 0.534 | 0.740 | 0.590 | 0.498 | 0.588 | 0.603 | 0.507 | 0.547 |
+| 18 | 0.444 | 0.767 | 0.440 | 0.402 | 0.614 | 0.466 | 0.691 | 0.517 | 0.624 | 0.420 | 0.543 | 0.439 |
+| 19 | 0.382 | 0.459 | 0.451 | 0.556 | 0.375 | 0.420 | 0.484 | 0.389 | 0.409 | 0.334 | 0.533 | 0.606 |
+| 20 | 0.307 | 0.372 | 0.280 | 0.250 | 0.333 | 0.284 | 0.376 | 0.321 | 0.347 | 0.275 | 0.299 | 0.273 |
+
+</div>
+
 ## Correlation with the reference by cluster
 
-```{python}
-#| label: heatmap-reference-cd73ft-joyal
+``` python
 # the same matrix three ways, matching the marker heatmap. The raw correlations sit in a
 # narrow band, so the two scaled panels are what can actually be read: down a column asks
 # "which cluster is most this class", and across a row asks "which class best fits this
@@ -1453,10 +1827,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/heatmap-reference-cd73ft-joyal-output-1.png"
+id="heatmap-reference-cd73ft-joyal" />
+
 ## Marker scores
 
-```{python}
-#| label: score-markers-cd73ft-joyal
+``` python
 retina_markers = {
     "Rods": ["Rho", "Pde6b", "Nrl", "Nr2e3"],
     "Cones": ["Opn1mw", "Opn1sw", "Arr3", "Thrb"],
@@ -1482,10 +1859,21 @@ for cell_type, genes in retina_markers.items():
     print(f"{cell_type}: {len(present)}/{len(genes)} markers")
 ```
 
+    Rods: 4/4 markers
+    Cones: 4/4 markers
+    RGC: 4/4 markers
+    Amacrine: 4/4 markers
+    Bipolar: 4/4 markers
+    Horizontal: 4/4 markers
+    Muller_Glia: 4/4 markers
+    Microglia: 4/4 markers
+    Vascular_Endothelial: 3/3 markers
+    Pericytes: 3/3 markers
+    Astrocytes: 3/3 markers
+
 ## Marker scores by cluster
 
-```{python}
-#| label: score-violin-by-cluster-cd73ft-joyal
+``` python
 score_df = sc.get.obs_df(cd73ft_joyal, keys=[ranked_key] + score_keys)
 
 for start in range(0, len(score_keys), 6):
@@ -1517,10 +1905,17 @@ for start in range(0, len(score_keys), 6):
     plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/score-violin-by-cluster-cd73ft-joyal-output-1.png"
+id="score-violin-by-cluster-cd73ft-joyal-1" />
+
+<img
+src="oir_analysis_files/figure-commonmark/score-violin-by-cluster-cd73ft-joyal-output-2.png"
+id="score-violin-by-cluster-cd73ft-joyal-2" />
+
 ## Marker scores on the UMAP
 
-```{python}
-#| label: umap-scores-cd73ft-joyal
+``` python
 for start in range(0, len(score_keys), 3):
     group = score_keys[start:start + 3]
 
@@ -1560,19 +1955,37 @@ for start in range(0, len(score_keys), 3):
     plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/umap-scores-cd73ft-joyal-output-1.png"
+id="umap-scores-cd73ft-joyal-1" />
+
+<img
+src="oir_analysis_files/figure-commonmark/umap-scores-cd73ft-joyal-output-2.png"
+id="umap-scores-cd73ft-joyal-2" />
+
+<img
+src="oir_analysis_files/figure-commonmark/umap-scores-cd73ft-joyal-output-3.png"
+id="umap-scores-cd73ft-joyal-3" />
+
+<img
+src="oir_analysis_files/figure-commonmark/umap-scores-cd73ft-joyal-output-4.png"
+id="umap-scores-cd73ft-joyal-4" />
+
 ## Marker genes by cluster
 
-```{python}
-#| label: dotplot-markers-cd73ft-joyal
+``` python
 # figsize is deliberately not passed: dotplot derives its own from the gene and cluster counts,
 # and forcing it to slide dimensions packs 41 genes across 21 clusters until the dots overlap
 sc.pl.dotplot(cd73ft_joyal, markers_present, groupby=ranked_key, standard_scale="var")
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/dotplot-markers-cd73ft-joyal-output-1.png"
+id="dotplot-markers-cd73ft-joyal" />
+
 ## Marker score heatmap
 
-```{python}
-#| label: heatmap-scores-cd73ft-joyal
+``` python
 mean_scores = score_df.groupby(ranked_key, observed=True)[score_keys].mean()
 mean_scores.columns = [cell_type.replace("_", " ") for cell_type in retina_markers]
 
@@ -1619,10 +2032,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/heatmap-scores-cd73ft-joyal-output-1.png"
+id="heatmap-scores-cd73ft-joyal" />
+
 ## Preliminary cell types
 
-```{python}
-#| label: annotate-clusters-cd73ft-joyal
+``` python
 # the call is the best-correlating reference class. The marker scores stay in the document
 # as an independent read on the same question — where the two disagree, the disagreement is
 # the thing to look at before writing an override.
@@ -1659,10 +2075,47 @@ pd.DataFrame({
 })
 ```
 
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+&#10;    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+&#10;    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+
+|     | cell_type   | cells | correlation | margin | marker call          |
+|-----|-------------|-------|-------------|--------|----------------------|
+| 1   | BC          | 1277  | 0.813       | 0.131  | Bipolar              |
+| 2   | BC          | 1267  | 0.697       | 0.029  | Bipolar              |
+| 3   | MG          | 996   | 0.815       | 0.074  | Muller Glia          |
+| 4   | MG          | 908   | 0.814       | 0.098  | Muller Glia          |
+| 5   | BC          | 820   | 0.644       | 0.001  | Bipolar              |
+| 6   | BC          | 773   | 0.676       | 0.024  | Bipolar              |
+| 7   | Cone        | 742   | 0.787       | 0.063  | Cones                |
+| 8   | AC          | 689   | 0.819       | 0.094  | Amacrine             |
+| 9   | BC          | 635   | 0.671       | 0.020  | Bipolar              |
+| 10  | BC          | 439   | 0.652       | 0.016  | Bipolar              |
+| 11  | Pericyte    | 305   | 0.759       | 0.047  | Pericytes            |
+| 12  | Astrocyte   | 300   | 0.573       | 0.041  | Bipolar              |
+| 13  | Microglia   | 285   | 0.780       | 0.236  | Microglia            |
+| 14  | Endothelial | 215   | 0.801       | 0.116  | Vascular Endothelial |
+| 15  | MG          | 196   | 0.702       | 0.020  | Muller Glia          |
+| 16  | RGC         | 125   | 0.796       | 0.056  | RGC                  |
+| 17  | HC          | 121   | 0.740       | 0.111  | Horizontal           |
+| 18  | Astrocyte   | 113   | 0.767       | 0.076  | Muller Glia          |
+| 19  | Rod         | 80    | 0.606       | 0.050  | Rods                 |
+| 20  | MG          | 43    | 0.376       | 0.004  | Muller Glia          |
+
+</div>
+
 ## Refining a call with the marker scores
 
-```{python}
-#| label: refine-cell-types-cd73ft-joyal
+``` python
 # the reference calls a whole cluster one class, so a population that never forms its own
 # cluster cannot be named. That is not this batch's problem: endothelium (cluster 14, 215
 # cells) and pericytes (cluster 11, 305) each come out on their own here, where in WR_Joyal
@@ -1783,10 +2236,27 @@ cd73ft_joyal.uns["cell_type_colors"] = [
 cd73ft_joyal.obs["cell_type"].value_counts()
 ```
 
+    cluster    parent child  cells  would move  tradeoff  applied
+         12 Astrocyte    BC    300         176    -0.140    False
+         18 Astrocyte    MG    113          91    -0.222    False
+
+    cell_type
+    BC             5211
+    MG             2143
+    Cone            742
+    AC              689
+    Astrocyte       413
+    Pericyte        305
+    Microglia       285
+    Endothelial     215
+    RGC             125
+    HC              121
+    Rod              80
+    Name: count, dtype: int64
+
 ## Cells reassigned by marker score
 
-```{python}
-#| label: refine-scatter-cd73ft-joyal
+``` python
 # the two scores against each other, one panel per refinement. A cluster worth splitting
 # looks like an L — each arm high on one score and flat on the other, with the middle
 # empty. A diffuse cloud across the diagonal means the two classes are not separable this
@@ -1829,10 +2299,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/refine-scatter-cd73ft-joyal-output-1.png"
+id="refine-scatter-cd73ft-joyal" />
+
 ## Preliminary cell types on the UMAP
 
-```{python}
-#| label: umap-cell-types-cd73ft-joyal
+``` python
 plt.rcParams["figure.figsize"] = (6.5, 4.3)
 
 ax = sc.pl.umap(
@@ -1845,10 +2318,13 @@ ax.set_aspect("equal", adjustable="datalim")
 plt.show()
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/umap-cell-types-cd73ft-joyal-output-1.png"
+id="umap-cell-types-cd73ft-joyal" />
+
 ## Txn1 on the UMAP
 
-```{python}
-#| label: umap-txn1-cd73ft-joyal
+``` python
 fig, axs = plt.subplots(2, 1, height_ratios=[1, 0.22], figsize=(4.3, 3.9),
                         constrained_layout=True)
 
@@ -1869,10 +2345,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/umap-txn1-cd73ft-joyal-output-1.png"
+id="umap-txn1-cd73ft-joyal" />
+
 ## Txn1 by cell type
 
-```{python}
-#| label: txn1-violin-celltype-cd73ft-joyal
+``` python
 txn1_df = sc.get.obs_df(cd73ft_joyal, keys=["TXN1", "cell_type", "condition", "timepoint"])
 
 fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
@@ -1903,10 +2382,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/txn1-violin-celltype-cd73ft-joyal-output-1.png"
+id="txn1-violin-celltype-cd73ft-joyal" />
+
 ## Txn1 by cell type and condition
 
-```{python}
-#| label: txn1-violin-condition-cd73ft-joyal
+``` python
 condition_palette = dict(zip(cd73ft_joyal.obs["condition"].cat.categories,
                              cd73ft_joyal.uns["condition_colors"]))
 
@@ -1928,10 +2410,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/txn1-violin-condition-cd73ft-joyal-output-1.png"
+id="txn1-violin-condition-cd73ft-joyal" />
+
 ## Txn1 by cell type and timepoint
 
-```{python}
-#| label: txn1-violin-timepoint-cd73ft-joyal
+``` python
 timepoint_palette = dict(zip(cd73ft_joyal.obs["timepoint"].cat.categories,
                              cd73ft_joyal.uns["timepoint_colors"]))
 
@@ -1953,10 +2438,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/txn1-violin-timepoint-cd73ft-joyal-output-1.png"
+id="txn1-violin-timepoint-cd73ft-joyal" />
+
 ## Txn1 across the design
 
-```{python}
-#| label: umap-txn1-stratified-cd73ft-joyal
+``` python
 # laid out like the violin slides below: timepoint down the rows, condition across the
 # columns, so the same comparison sits in the same direction in every Txn1 figure
 condition_order = list(cd73ft_joyal.obs["condition"].cat.categories)
@@ -2003,10 +2491,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/umap-txn1-stratified-cd73ft-joyal-output-1.png"
+id="umap-txn1-stratified-cd73ft-joyal" />
+
 ## Txn1 by cell type across the design
 
-```{python}
-#| label: txn1-violin-stratified-cd73ft-joyal
+``` python
 cell_type_order = list(cd73ft_joyal.obs["cell_type"].cat.categories)
 condition_order = list(cd73ft_joyal.obs["condition"].cat.categories)
 timepoints = list(cd73ft_joyal.obs["timepoint"].cat.categories)
@@ -2040,10 +2531,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="oir_analysis_files/figure-commonmark/txn1-violin-stratified-cd73ft-joyal-output-1.png"
+id="txn1-violin-stratified-cd73ft-joyal" />
+
 ## Txn1 by cell type across the design, grouped by timepoint
 
-```{python}
-#| label: txn1-violin-stratified-by-condition-cd73ft-joyal
+``` python
 timepoint_palette = dict(zip(cd73ft_joyal.obs["timepoint"].cat.categories,
                              cd73ft_joyal.uns["timepoint_colors"]))
 
@@ -2075,3 +2569,7 @@ for label in axes[-1][0].get_xticklabels():
 plt.show()
 plt.close(fig)
 ```
+
+<img
+src="oir_analysis_files/figure-commonmark/txn1-violin-stratified-by-condition-cd73ft-joyal-output-1.png"
+id="txn1-violin-stratified-by-condition-cd73ft-joyal" />

@@ -7,6 +7,9 @@ The whole analysis is one Quarto document, `oir_analysis.qmd`. It downloads the 
 the object, and then clusters, annotates and reads out two preparations, each written out in
 full. There is no pipeline, no `bin/`, and no scripts.
 
+**→ [`report.md`](report.md) is the rendered analysis, every figure inline.** Read it here in
+the browser; nothing needs to be installed or downloaded to see the results.
+
 ## The data
 
 One published DGE matrix, genes × cells, **already log1p-normalized** — the series publishes no
@@ -204,26 +207,38 @@ Quarto itself is expected to be on `PATH` and is not installed by the env.
 
 ## Rendering
 
-The document declares two formats — an HTML report and a PowerPoint deck — so pick one:
+The document declares three formats — an HTML report, a PowerPoint deck, and the GitHub
+markdown — so pick one:
 
 ```bash
 export QUARTO_PYTHON=$CONDA_PREFIX/bin/python
 
 quarto render oir_analysis.qmd --to html    # the working report
 quarto render oir_analysis.qmd --to pptx    # the deck
+quarto render oir_analysis.qmd --to gfm     # report.md, the copy GitHub renders
 ```
 
-**Prefer `--to` over the bare `quarto render`**, which builds both formats and executes the
-notebook once per format — the whole analysis, twice.
+**Prefer `--to` over the bare `quarto render`**, which builds all three and executes the
+notebook once per format — the whole analysis, three times.
 
 The first render downloads the DGE matrix and the reference, spends a few minutes parsing and
 aggregating them, and clusters both preparations; later renders read the saved objects instead.
-Both outputs are gitignored.
 
-The two formats differ only in what they show, not in what they run — **every step appears in
-both**. The HTML prints its code; `echo: false` is scoped to the `pptx` block so slides carry
-output alone. Text-only chunks are on slides too, which means the widest of them, the 21 × 12
-correlation table, is present but not readable from the back of a room.
+The three formats differ only in what they show, not in what they run — **every step appears in
+all of them**. HTML and gfm print their code; `echo: false` is scoped to the `pptx` block so
+slides carry output alone. Text-only chunks are on slides too, which means the widest of them,
+the 21 × 12 correlation table, is present but not readable from the back of a room.
+
+**The gfm output is the one that is committed.** HTML and pptx are gitignored, being derived
+and large, but `report.md` is what makes the analysis readable without building anything, so it
+and its figures are tracked. A markdown file cannot inline its images the way `embed-resources`
+lets the HTML, so the figures live beside it in `oir_analysis_files/figure-commonmark/` — 50
+PNGs, about 9 MB. `.gitignore` reopens `*_files/` for that one subdirectory and no other.
+
+The cost is worth knowing before you re-render: **every gfm render rewrites all 50 PNGs**, so
+they show up as modified whether or not the analysis changed. Commit the figures when the
+figures actually changed, and check out the rest — `git checkout -- oir_analysis_files/` after
+a no-op re-render keeps the noise out of the history.
 
 Slides come from `##` headings — pandoc has nothing else to split on, which is why every chunk
 that produces output has one and `setup`, which produces none, does not. `slide-level: 2` is
@@ -248,6 +263,9 @@ The deck currently comes to 68 slides.
 
 ```
 ├── oir_analysis.qmd    the analysis
+├── report.md           the gfm render, committed so GitHub can show it
+├── oir_analysis_files/
+│   └── figure-commonmark/   report.md's figures, committed with it
 ├── environment.yml
 ├── data/raw/           downloaded from GEO and CELLxGENE, never edited (gitignored)
 └── data/processed/     objects the document writes and re-reads       (gitignored)

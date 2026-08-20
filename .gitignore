@@ -10,7 +10,16 @@ data/
 *_files/
 *.quarto_ipynb
 
-# The rendered report and deck are outputs of the .qmd, not sources.
+# The gfm figures are the exception: report.md is committed so the analysis can be
+# read on GitHub, and a markdown file carries its figures as files beside it rather
+# than inline. Git will not re-include a path whose parent is excluded, so the
+# parent directory has to be reopened before the one subdirectory is let back in.
+!oir_analysis_files/
+oir_analysis_files/*
+!oir_analysis_files/figure-commonmark/
+
+# The rendered report and deck are outputs of the .qmd, not sources. report.md is
+# committed instead of ignored, being the copy GitHub renders.
 *.html
 *.pptx
 
