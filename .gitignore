@@ -10,9 +10,8 @@ data/
 *.quarto_ipynb
 
 # Everything rendered lands in reports/. The markdown and the figures beside it are
-# committed, being the copy GitHub renders; the html and the deck are not, being the
-# same content in formats git has nothing useful to say about.
-*.html
+# committed, being the copy GitHub renders; the deck is not, being the same content in
+# a format git has nothing useful to say about. Rebuild it by rendering.
 *.pptx
 
 # A render that forgot --output-dir, which belongs in reports/ rather than here.

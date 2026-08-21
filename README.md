@@ -1,54 +1,26 @@
 # oir-analysis-3
 
-Re-analysis of **GSE150703** — mouse retina in the oxygen-induced retinopathy (OIR) model —
-reading out **Txn1** expression across retinal cell types.
+This repo contains the analysis of Txn1 expression in the mouse retina.
+Here are links to the reports in this repo:
+
+- [**The analysis**](reports/txn1-expression-retina.md) — every step and every figure, rendered
+  for GitHub.
 
 ## The data
 
-[GSE150703](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE150703) (Binet *et al.*,
-*Science* **369**, eaay5356, 2020) is normalized single-cell counts from mouse retina. Each
-barcode carries the experimental design in its name — condition (normoxia or OIR), timepoint
-(P14 or P17), dissociation prep, lab, and replicate:
+We analyze a single-cell RNA seq data set from
+[Binet *et al.* 2020](https://doi.org/10.1126/science.aay5356), deposited at
+[GSE150703](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE150703). This consists of data
+collected from two labs, Joyal and McCarroll, two tissue preps, Whole Retina and Cd73ft, two
+timepoints p14 and p17, and two conditions, normoxia and oxygen-induced retinopathy.
 
-```
-OIR_P17_WR_Joyal_r1_AGCTATCAATTT
-│   │   │  │     │  └── droplet barcode
-│   │   │  │     └───── replicate
-│   │   │  └─────────── lab
-│   │   └────────────── prep
-│   └────────────────── timepoint
-└────────────────────── condition
-```
+We annotate this data using a mouse retina single cell atlas from
+[Li *et al.* 2024](https://doi.org/10.1016/j.isci.2024.109916), which we pull from
+[CELLxGENE](https://cellxgene.cziscience.com/). The reference consists of 330,930 cells across
+twelve major cell types which we will try to use to annotate our data with. After annotation we
+inspect the expression of Txn1 across the different cell types in the different conditions.
 
-Prep and lab together make the batch, and the two batches analyzed here are `WR_Joyal`, whole
-retina, and `Cd73ft_Joyal`, rod-depleted.
-
-## The analysis
-
-Setup downloads the counts and builds them into an AnnData object, splitting each barcode into
-those design columns. From there each batch is subset out and analyzed on its own, both the same
-way: QC metrics, gene filtering, variable genes, PCA, neighbors, UMAP, and Leiden at a fixed
-resolution.
-
-Clusters are named against a reference — the mouse retina cell atlas (Li *et al.*, *iScience*
-**27**, 109916, 2024), 330,930 healthy retina cells across twelve major cell types, pulled from
-CELLxGENE and summed into one centroid per cell type. Every query cell is Spearman-correlated
-against all twelve centroids over the shared genes, and the correlations are standardized within
-each cell so the numbers compare between cells rather than track sequencing depth. Each cluster
-takes its best-correlating class; a refinement pass then re-labels cells inside a cluster that
-consistently prefer a different class, so populations that never formed their own cluster still
-get named.
-
-With cell types in hand, the rest is the Txn1 readout: Txn1 on the UMAP and as violins, broken
-out by cell type, by condition, by timepoint, and across the full condition-by-timepoint design.
-
-Everything lives in one Quarto document, `txn1-expression-retina.qmd`. There is no pipeline and
-no scripts.
-
-**→ [`reports/txn1-expression-retina.md`](reports/txn1-expression-retina.md) is the rendered
-analysis, every figure inline.** Nothing needs to be installed to read it.
-
-## Running it
+## Running The Analysis
 
 ### 1. Install conda
 
@@ -59,15 +31,14 @@ installed:
 conda --version
 ```
 
-If that doesn't answer, install Miniconda first — the instructions are at
-[docs.anaconda.com/miniconda/install](https://docs.anaconda.com/miniconda/install/).
+If conda is not installed please see
+[these instructions](https://docs.anaconda.com/miniconda/install/) for installing conda.
 
-### 2. Create the environment
+### 2. Create the conda environment
 
 Now that conda is installed, let's use it to install the software the analysis needs.
-`environment.yml` lists all of it — python, scanpy and the rest of the scverse stack, and Quarto
-alongside them, so the Quarto that renders the document is the one in the environment rather than
-whatever happens to be on `PATH`.
+`environment.yml` lists all of the software needed and we will use it to install these packages
+with conda.
 
 ```bash
 conda env create -f environment.yml
@@ -76,27 +47,21 @@ conda activate oir-analysis-3
 
 ### 3. Register the Jupyter kernel
 
-Quarto runs the document's code through a Jupyter kernel, and the document asks for one by name:
-`jupyter: oir-analysis-3`. So let's register the environment we just made under that name.
+Now that the conda environment has been created, we need to register the jupyter kernel in the
+environment so it can be discovered by quarto.
 
 ```bash
 python -m ipykernel install --user --name oir-analysis-3
 ```
 
-Without this, Quarto falls back to whatever kernel comes first and fills the output with
-tracebacks, so it's worth doing before the first render rather than after.
+### 4. Render the Analysis
 
-### 4. Render
-
-Now we can render. The document builds three formats, and we'll ask for one at a time — a bare
-`quarto render` builds all three and re-executes the whole analysis once per format. Everything
-rendered goes to `reports/`, which is what `--output-dir` is doing here; leave it off and the
-render lands in the repo root instead.
+With the conda environment installed and activated we can now render the analysis. One command
+builds both formats the document declares: a github formatted markdown document, which is the
+copy GitHub shows, and a powerpoint deck.
 
 ```bash
-quarto render txn1-expression-retina.qmd --to html --output-dir reports   # the working report
-quarto render txn1-expression-retina.qmd --to pptx --output-dir reports   # the deck
-quarto render txn1-expression-retina.qmd --to gfm  --output-dir reports   # the copy GitHub renders
+quarto render txn1-expression-retina.qmd --output-dir reports
 ```
 
 The first render downloads ~3.7 GB — 226 MB of counts from GEO and a 3.5 GB atlas from
@@ -113,12 +78,6 @@ until we delete what they wrote:
 ```bash
 rm data/processed/GSE150703_adata_WR_Joyal_clustered.h5ad    # to change the gene filter, leiden args
 ```
-
-Everything after the clustering is unguarded and takes effect on the next render.
-
-Re-rendering gfm is safe to do freely. Every seed is pinned and matplotlib writes no timestamps,
-so a render that changes nothing produces byte-identical figures and git reports no diff. Only
-the figures that actually changed show up.
 
 ## Layout
 
