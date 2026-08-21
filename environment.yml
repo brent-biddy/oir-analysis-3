@@ -1,6 +1,6 @@
 # Conda env for rendering the analysis document.
 #
-# The env NAME is what the `jupyter:` line in oir_analysis.qmd pins to. Quarto can only honour
+# The env NAME is what the `jupyter:` line in txn1-expression-retina.qmd pins to. Quarto can only honour
 # that pin if it is run by a python that can see the kernel, so the env must be registered:
 #
 #   conda env create -f environment.yml

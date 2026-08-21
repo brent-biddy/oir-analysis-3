@@ -1,36 +1,20 @@
----
-title: "OIR retina scRNA-seq"
-subtitle: "WR_Joyal and Cd73ft_Joyal, analysed the same way"
-author: "Brent Biddy"
-date: today
-format:
-  html:
-    toc: true
-    toc-depth: 3
-    embed-resources: true
-  pptx:
-    slide-level: 2
-    echo: false
-  gfm:
-    output-file: report.md
-    toc: true
-    # 1, not 3: the document has no level-3 headings, so depths 2 and 3 are the same
-    # hundred lines of step links in front of the first figure. Depth 1 is the two
-    # preparations and nothing else, which is the structure worth seeing on arrival —
-    # GitHub's own outline button still navigates to any individual step.
-    toc-depth: 1
-jupyter: oir-analysis-3
----
+# OIR retina scRNA-seq
+Brent Biddy
+2026-08-21
+
+- [Setup](#setup)
+- [Whole Retina](#whole-retina)
+- [Rod-depleted Retina](#rod-depleted-retina)
 
 # Setup
 
 ## Load Libraries
 
-First, let's load the libraries we need. We'll also set a few default plotting parameters here,
-so the figures stay consistent throughout the document.
+First, let’s load the libraries we need. We’ll also set a few default
+plotting parameters here, so the figures stay consistent throughout the
+document.
 
-```{python}
-#| label: setup
+``` python
 from pathlib import Path                    # used to construct file paths
 from urllib.request import urlretrieve      # used to download query and reference data
 
@@ -56,24 +40,26 @@ plt.rcParams.update({
 
 ## Download Data
 
-Now let's download the two datasets we need: the OIR and normoxia retina counts from GEO, and
-the mouse retina cell atlas we'll use as an annotation reference. Both are saved to `data/raw/`,
-and later renders re-use them rather than downloading again.
+Now let’s download the two datasets we need: the OIR and normoxia retina
+counts from GEO, and the mouse retina cell atlas we’ll use as an
+annotation reference. Both are saved to `data/raw/`, and later renders
+re-use them rather than downloading again.
 
-The query counts are already normalized, so we'll use them as they are rather than normalizing
-them ourselves.
+The query counts are already normalized, so we’ll use them as they are
+rather than normalizing them ourselves.
 
-- **Query** — [GSE150703](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE150703).
-  Binet *et al.*, Neutrophil extracellular traps target senescent vasculature for tissue
-  remodeling in retinopathy. *Science* **369**, eaay5356 (2020).
+- **Query** —
+  [GSE150703](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE150703).
+  Binet *et al.*, Neutrophil extracellular traps target senescent
+  vasculature for tissue remodeling in retinopathy. *Science* **369**,
+  eaay5356 (2020).
   [doi:10.1126/science.aay5356](https://doi.org/10.1126/science.aay5356)
-- **Reference** — the mouse retina cell atlas (MRCA), via CELLxGENE.
-  Li *et al.*, Comprehensive single-cell atlas of the mouse retina.
+- **Reference** — the mouse retina cell atlas (MRCA), via CELLxGENE. Li
+  *et al.*, Comprehensive single-cell atlas of the mouse retina.
   *iScience* **27**, 109916 (2024).
   [doi:10.1016/j.isci.2024.109916](https://doi.org/10.1016/j.isci.2024.109916)
 
-```{python}
-#| label: download
+``` python
 source_urls = {
     "query": (
         "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE150nnn/GSE150703/suppl/"
@@ -100,28 +86,29 @@ query_path = source_paths["query"]
 reference_path = source_paths["reference"]
 ```
 
+    query: GSE150703_retina_NORM_OIR_P14_P17_C57_WR_CD73FT_noamg_normalizedUMI_Count_DGEmatrix.txt.gz  (236 MB)
+    reference: a420c2bf-feeb-48db-a6c7-71f492f23131.h5ad  (3690 MB)
+
 ## Build Query AnnData
 
-Next, let's build an AnnData object from the query counts. The matrix comes as genes by cells,
-so we'll transpose it and store it sparsely.
+Next, let’s build an AnnData object from the query counts. The matrix
+comes as genes by cells, so we’ll transpose it and store it sparsely.
 
-Each barcode also encodes the experimental design, so we'll split it into columns:
+Each barcode also encodes the experimental design, so we’ll split it
+into columns:
 
-```
-OIR_P17_WR_Joyal_r1_AGCTATCAATTT
-│   │   │  │     │  └── droplet barcode
-│   │   │  │     └───── replicate
-│   │   │  └─────────── lab
-│   │   └────────────── prep
-│   └────────────────── timepoint
-└────────────────────── condition
-```
+    OIR_P17_WR_Joyal_r1_AGCTATCAATTT
+    │   │   │  │     │  └── droplet barcode
+    │   │   │  │     └───── replicate
+    │   │   │  └─────────── lab
+    │   │   └────────────── prep
+    │   └────────────────── timepoint
+    └────────────────────── condition
 
-We'll also combine prep and lab into a batch column, since that pairing is what we'll cluster
-on.
+We’ll also combine prep and lab into a batch column, since that pairing
+is what we’ll cluster on.
 
-```{python}
-#| label: create-anndata
+``` python
 adata_path = Path("data/processed/GSE150703_adata.h5ad")
 adata_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -159,19 +146,25 @@ for obs_key, palette in obs_palettes.items():
 adata
 ```
 
+    AnnData object with n_obs × n_vars = 31271 × 21408
+        obs: 'condition', 'timepoint', 'prep', 'lab', 'replicate', 'batch'
+        uns: 'condition_colors', 'timepoint_colors', 'prep_colors', 'lab_colors', 'batch_colors'
+        layers: None (.X)
+
 The object is saved to `data/processed/` and re-used on later renders.
 
 ## Build Reference Centroids
 
-Now let's build the reference we'll annotate against. The mouse retina cell atlas holds 330,930
-cells across twelve major cell types, all of it healthy retina.
+Now let’s build the reference we’ll annotate against. The mouse retina
+cell atlas holds 330,930 cells across twelve major cell types, all of it
+healthy retina.
 
-To make the centroids we'll sum the UMI counts for each gene across the cells of each cell type,
-and do the same for CP10K normalized counts. We'll keep both as layers, along with the number of
-cells in each type, so we can calculate the mean later.
+To make the centroids we’ll sum the UMI counts for each gene across the
+cells of each cell type, and do the same for CP10K normalized counts.
+We’ll keep both as layers, along with the number of cells in each type,
+so we can calculate the mean later.
 
-```{python}
-#| label: reference-centroids
+``` python
 centroid_path = Path("data/processed/MRCA_majorclass_centroids.h5ad")
 
 if centroid_path.exists():                     # built once, then read back on later renders
@@ -206,31 +199,39 @@ else:
 reference_centroids
 ```
 
+    AnnData object with n_obs × n_vars = 12 × 31671
+        obs: 'n_cells'
+        var: 'ensembl_id'
+        layers: 'counts', None (.X)
+
 # Whole Retina
 
-Now let's work through the whole retina prep, the `WR_Joyal` batch. It holds
-`{python} f"{(adata.obs['batch'] == 'WR_Joyal').sum():,}"` cells across both conditions and both
-timepoints, though not evenly:
+Now let’s work through the whole retina prep, the `WR_Joyal` batch. It
+holds 15,143 cells across both conditions and both timepoints, though
+not evenly:
 
-```{python}
-#| label: design-wr-joyal
-#| output: asis
+``` python
 wr_joyal_obs = adata.obs[adata.obs["batch"] == "WR_Joyal"]
 design = pd.crosstab(wr_joyal_obs["condition"], wr_joyal_obs["timepoint"])
 print(design.rename_axis(index=None, columns=None).to_markdown())   # a real table, not a repr
 ```
 
+|      |  P14 |  P17 |
+|:-----|-----:|-----:|
+| NORM | 2512 |  932 |
+| OIR  | 5821 | 5878 |
+
 ## Cluster Cells
 
-First we'll subset the query data down to the `WR_Joyal` batch, and analyze the batch's cells in
-isolation.
+First we’ll subset the query data down to the `WR_Joyal` batch, and
+analyze the batch’s cells in isolation.
 
-Then we'll compute QC metrics, filter out rarely detected genes, keep the most variable genes,
-and embed. Rather than commit to one resolution up front, we'll cluster across a sweep of
-resolutions and choose from it in the next step.
+Then we’ll compute QC metrics, filter out rarely detected genes, keep
+the most variable genes, and embed. Rather than commit to one resolution
+up front, we’ll cluster across a sweep of resolutions and choose from it
+in the next step.
 
-```{python}
-#| label: cluster-wr-joyal
+``` python
 wr_joyal_resolution = 0.40   # chosen in oir-analysis and oir-analysis-2
 leiden_key = f"leiden_res_{wr_joyal_resolution:.2f}_v0"
 ranked_key = f"leiden_res_{wr_joyal_resolution:.2f}_v1"
@@ -294,14 +295,22 @@ else:
 wr_joyal
 ```
 
-The clustered object is saved to `data/processed/`, so later renders read it back and skip the
-clustering entirely. To re-run any of it, delete that file first.
+    AnnData object with n_obs × n_vars = 15143 × 19084
+        obs: 'condition', 'timepoint', 'prep', 'lab', 'replicate', 'batch', 'n_genes_by_log1p', 'total_log1p', 'total_log1p_mt', 'pct_log1p_mt', 'total_log1p_ribo', 'pct_log1p_ribo', 'total_log1p_hb', 'pct_log1p_hb', 'leiden_res_0.40_v0', 'leiden_res_0.40_v1'
+        var: 'mt', 'ribo', 'hb', 'n_cells_by_log1p', 'mean_log1p', 'pct_dropout_by_log1p', 'total_log1p', 'n_cells', 'highly_variable', 'means', 'dispersions', 'dispersions_norm'
+        uns: 'batch_colors', 'condition_colors', 'hvg', 'lab_colors', 'leiden_res_0.40_v0', 'leiden_res_0.40_v1_colors', 'neighbors', 'pca', 'prep_colors', 'timepoint_colors', 'umap'
+        obsm: 'X_pca', 'X_umap'
+        varm: 'PCs'
+        obsp: 'connectivities', 'distances'
+        layers: None (.X)
 
+The clustered object is saved to `data/processed/`, so later renders
+read it back and skip the clustering entirely. To re-run any of it,
+delete that file first.
 
 ## Clusters on the UMAP
 
-```{python}
-#| label: umap-clusters-wr-joyal
+``` python
 # scanpy builds the figure here, and takes no figsize argument, so rcParams is where its size
 # has to be set
 plt.rcParams["figure.figsize"] = (5.0, 4.3)
@@ -318,10 +327,13 @@ ax.set_aspect("equal", adjustable="datalim")
 plt.show()
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/umap-clusters-wr-joyal-output-1.png"
+id="umap-clusters-wr-joyal" />
+
 ## QC metrics
 
-```{python}
-#| label: qc-violin-wr-joyal
+``` python
 qc_metrics = {
     "n_genes_by_log1p": "Genes detected",
     "total_log1p": "Total expression",
@@ -349,10 +361,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/qc-violin-wr-joyal-output-1.png"
+id="qc-violin-wr-joyal" />
+
 ## QC metrics by cluster
 
-```{python}
-#| label: qc-violin-by-cluster-wr-joyal
+``` python
 # only scanpy reads the _colors entry out of uns, so the palette is handed to seaborn
 # explicitly — otherwise a cluster changes color between the UMAP and these violins
 cluster_palette = dict(zip(wr_joyal.obs[ranked_key].cat.categories, wr_joyal.uns[f"{ranked_key}_colors"]))
@@ -386,13 +401,17 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/qc-violin-by-cluster-wr-joyal-output-1.png"
+id="qc-violin-by-cluster-wr-joyal" />
+
 ## Correlation with the reference
 
-Correlating each cell against the same centroids says which clusters hold more than one cell
-type, without needing a marker panel to name the second one.
+Correlating each cell against the same centroids says which clusters
+hold more than one cell type, without needing a marker panel to name the
+second one.
 
-```{python}
-#| label: correlate-cells-wr-joyal
+``` python
 # every shared gene here, where the cluster-level correlation above uses variable genes only.
 # A centroid is dense, so its housekeeping bulk lifts all twelve classes together and flattens
 # the differences; a single cell is 97% zero over those same variable genes and needs every
@@ -437,12 +456,12 @@ cell_composition = pd.crosstab(wr_joyal.obs[ranked_key], wr_joyal.obs["cell_call
 
 ## Correlation by cluster
 
-The per-cell correlations averaged over each cluster. Where a cluster holds one cell type it
-has one bright class; where it holds two, the brightness is shared. The cluster's call is the
-brightest class in its row.
+The per-cell correlations averaged over each cluster. Where a cluster
+holds one cell type it has one bright class; where it holds two, the
+brightness is shared. The cluster’s call is the brightest class in its
+row.
 
-```{python}
-#| label: heatmap-cells-by-cluster-wr-joyal
+``` python
 # the matrix three ways. The values are standardized per cell upstream, so the first panel is
 # a mean z rather than a mean correlation, and is comparable down a column as well as across a
 # row. The row-scaled panel is the annotation question: which class best fits this cluster.
@@ -495,13 +514,17 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/heatmap-cells-by-cluster-wr-joyal-output-1.png"
+id="heatmap-cells-by-cluster-wr-joyal" />
+
 ## Correlation on the UMAP
 
-The same correlations, one panel per reference class. A class with a population
-in this batch lights up somewhere; a class without one has nowhere bright to sit.
+The same correlations, one panel per reference class. A class with a
+population in this batch lights up somewhere; a class without one has
+nowhere bright to sit.
 
-```{python}
-#| label: umap-cell-correlation-wr-joyal
+``` python
 # each panel on its own scale, over the standardized correlations. Standardizing is what makes
 # a panel about preference rather than depth, and it happens once above rather than here.
 umap_coords = wr_joyal.obsm["X_umap"]
@@ -531,13 +554,17 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/umap-cell-correlation-wr-joyal-output-1.png"
+id="umap-cell-correlation-wr-joyal" />
+
 ## Correlation by cell type
 
-The same correlations grouped by the calls the refinement settled on. A diagonal here is the
-check that the refinement worked: each cell type should correlate best with its own class.
+The same correlations grouped by the calls the refinement settled on. A
+diagonal here is the check that the refinement worked: each cell type
+should correlate best with its own class.
 
-```{python}
-#| label: annotate-clusters-wr-joyal
+``` python
 # the call is the best-correlating reference class. The marker scores stay in the document
 # as an independent read on the same question — where the two disagree, the disagreement is
 # the thing to look at before writing an override.
@@ -557,8 +584,7 @@ wr_joyal.uns["cell_type_colors"] = [
 ]
 ```
 
-```{python}
-#| label: refine-cell-types-wr-joyal
+``` python
 # the reference calls a whole cluster one class, so a population that never forms its own
 # cluster cannot be named from the cluster call alone. The per-cell correlations above say
 # where that happened: a class a real share of a cluster's cells correlate best with is a
@@ -594,8 +620,7 @@ wr_joyal.uns["cell_type_colors"] = [
 ]
 ```
 
-```{python}
-#| label: heatmap-cells-by-type-wr-joyal
+``` python
 # the same correlations grouped by the call the refinement settled on rather than by cluster,
 # and scaled per row for the same reason. A diagonal is the check that it worked.
 mean_by_type = cell_correlation.groupby(wr_joyal.obs["cell_type"], observed=True).mean()
@@ -617,10 +642,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/heatmap-cells-by-type-wr-joyal-output-1.png"
+id="heatmap-cells-by-type-wr-joyal" />
+
 ## Preliminary cell types on the UMAP
 
-```{python}
-#| label: umap-cell-types-wr-joyal
+``` python
 plt.rcParams["figure.figsize"] = (6.5, 4.3)
 
 ax = sc.pl.umap(
@@ -633,10 +661,13 @@ ax.set_aspect("equal", adjustable="datalim")
 plt.show()
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/umap-cell-types-wr-joyal-output-1.png"
+id="umap-cell-types-wr-joyal" />
+
 ## Txn1 on the UMAP
 
-```{python}
-#| label: umap-txn1-wr-joyal
+``` python
 fig, axs = plt.subplots(2, 1, height_ratios=[1, 0.22], figsize=(4.3, 3.9),
                         constrained_layout=True)
 
@@ -657,10 +688,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/umap-txn1-wr-joyal-output-1.png"
+id="umap-txn1-wr-joyal" />
+
 ## Txn1 by cell type
 
-```{python}
-#| label: txn1-violin-celltype-wr-joyal
+``` python
 txn1_df = sc.get.obs_df(wr_joyal, keys=["TXN1", "cell_type", "condition", "timepoint"])
 
 fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
@@ -691,10 +725,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/txn1-violin-celltype-wr-joyal-output-1.png"
+id="txn1-violin-celltype-wr-joyal" />
+
 ## Txn1 by cell type and condition
 
-```{python}
-#| label: txn1-violin-condition-wr-joyal
+``` python
 condition_palette = dict(zip(wr_joyal.obs["condition"].cat.categories,
                              wr_joyal.uns["condition_colors"]))
 
@@ -716,10 +753,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/txn1-violin-condition-wr-joyal-output-1.png"
+id="txn1-violin-condition-wr-joyal" />
+
 ## Txn1 by cell type and timepoint
 
-```{python}
-#| label: txn1-violin-timepoint-wr-joyal
+``` python
 timepoint_palette = dict(zip(wr_joyal.obs["timepoint"].cat.categories,
                              wr_joyal.uns["timepoint_colors"]))
 
@@ -741,10 +781,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/txn1-violin-timepoint-wr-joyal-output-1.png"
+id="txn1-violin-timepoint-wr-joyal" />
+
 ## Txn1 across the design
 
-```{python}
-#| label: umap-txn1-stratified-wr-joyal
+``` python
 # laid out like the violin slides below: timepoint down the rows, condition across the
 # columns, so the same comparison sits in the same direction in every Txn1 figure
 condition_order = list(wr_joyal.obs["condition"].cat.categories)
@@ -791,10 +834,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/umap-txn1-stratified-wr-joyal-output-1.png"
+id="umap-txn1-stratified-wr-joyal" />
+
 ## Txn1 by cell type across the design
 
-```{python}
-#| label: txn1-violin-stratified-wr-joyal
+``` python
 cell_type_order = list(wr_joyal.obs["cell_type"].cat.categories)
 condition_order = list(wr_joyal.obs["condition"].cat.categories)
 timepoints = list(wr_joyal.obs["timepoint"].cat.categories)
@@ -828,10 +874,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/txn1-violin-stratified-wr-joyal-output-1.png"
+id="txn1-violin-stratified-wr-joyal" />
+
 ## Txn1 by cell type across the design, grouped by timepoint
 
-```{python}
-#| label: txn1-violin-stratified-by-condition-wr-joyal
+``` python
 timepoint_palette = dict(zip(wr_joyal.obs["timepoint"].cat.categories,
                              wr_joyal.uns["timepoint_colors"]))
 
@@ -864,12 +913,15 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/txn1-violin-stratified-by-condition-wr-joyal-output-1.png"
+id="txn1-violin-stratified-by-condition-wr-joyal" />
+
 # Rod-depleted Retina
 
 ## Cluster Cells
 
-```{python}
-#| label: cluster-cd73ft-joyal
+``` python
 cd73ft_joyal_resolution = 0.50   # chosen in oir-analysis and oir-analysis-2
 leiden_key = f"leiden_res_{cd73ft_joyal_resolution:.2f}_v0"
 ranked_key = f"leiden_res_{cd73ft_joyal_resolution:.2f}_v1"
@@ -933,11 +985,18 @@ else:
 cd73ft_joyal
 ```
 
+    AnnData object with n_obs × n_vars = 10329 × 18098
+        obs: 'condition', 'timepoint', 'prep', 'lab', 'replicate', 'batch', 'n_genes_by_log1p', 'total_log1p', 'total_log1p_mt', 'pct_log1p_mt', 'total_log1p_ribo', 'pct_log1p_ribo', 'total_log1p_hb', 'pct_log1p_hb', 'leiden_res_0.50_v0', 'leiden_res_0.50_v1'
+        var: 'mt', 'ribo', 'hb', 'n_cells_by_log1p', 'mean_log1p', 'pct_dropout_by_log1p', 'total_log1p', 'n_cells', 'highly_variable', 'means', 'dispersions', 'dispersions_norm'
+        uns: 'batch_colors', 'condition_colors', 'hvg', 'lab_colors', 'leiden_res_0.50_v0', 'leiden_res_0.50_v1_colors', 'neighbors', 'pca', 'prep_colors', 'timepoint_colors', 'umap'
+        obsm: 'X_pca', 'X_umap'
+        varm: 'PCs'
+        obsp: 'connectivities', 'distances'
+        layers: None (.X)
 
 ## Clusters on the UMAP
 
-```{python}
-#| label: umap-clusters-cd73ft-joyal
+``` python
 # scanpy builds the figure here, and takes no figsize argument, so rcParams is where its size
 # has to be set
 plt.rcParams["figure.figsize"] = (5.0, 4.3)
@@ -954,10 +1013,13 @@ ax.set_aspect("equal", adjustable="datalim")
 plt.show()
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/umap-clusters-cd73ft-joyal-output-1.png"
+id="umap-clusters-cd73ft-joyal" />
+
 ## QC metrics
 
-```{python}
-#| label: qc-violin-cd73ft-joyal
+``` python
 qc_metrics = {
     "n_genes_by_log1p": "Genes detected",
     "total_log1p": "Total expression",
@@ -985,10 +1047,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/qc-violin-cd73ft-joyal-output-1.png"
+id="qc-violin-cd73ft-joyal" />
+
 ## QC metrics by cluster
 
-```{python}
-#| label: qc-violin-by-cluster-cd73ft-joyal
+``` python
 # only scanpy reads the _colors entry out of uns, so the palette is handed to seaborn
 # explicitly — otherwise a cluster changes color between the UMAP and these violins
 cluster_palette = dict(zip(cd73ft_joyal.obs[ranked_key].cat.categories, cd73ft_joyal.uns[f"{ranked_key}_colors"]))
@@ -1022,13 +1087,17 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/qc-violin-by-cluster-cd73ft-joyal-output-1.png"
+id="qc-violin-by-cluster-cd73ft-joyal" />
+
 ## Correlation with the reference
 
-Correlating each cell against the same centroids says which clusters hold more than one cell
-type, without needing a marker panel to name the second one.
+Correlating each cell against the same centroids says which clusters
+hold more than one cell type, without needing a marker panel to name the
+second one.
 
-```{python}
-#| label: correlate-cells-cd73ft-joyal
+``` python
 # every shared gene here, where the cluster-level correlation above uses variable genes only.
 # A centroid is dense, so its housekeeping bulk lifts all twelve classes together and flattens
 # the differences; a single cell is 97% zero over those same variable genes and needs every
@@ -1073,12 +1142,12 @@ cell_composition = pd.crosstab(cd73ft_joyal.obs[ranked_key], cd73ft_joyal.obs["c
 
 ## Correlation by cluster
 
-The per-cell correlations averaged over each cluster. Where a cluster holds one cell type it
-has one bright class; where it holds two, the brightness is shared. The cluster's call is the
-brightest class in its row.
+The per-cell correlations averaged over each cluster. Where a cluster
+holds one cell type it has one bright class; where it holds two, the
+brightness is shared. The cluster’s call is the brightest class in its
+row.
 
-```{python}
-#| label: heatmap-cells-by-cluster-cd73ft-joyal
+``` python
 # the matrix three ways. The values are standardized per cell upstream, so the first panel is
 # a mean z rather than a mean correlation, and is comparable down a column as well as across a
 # row. The row-scaled panel is the annotation question: which class best fits this cluster.
@@ -1131,13 +1200,17 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/heatmap-cells-by-cluster-cd73ft-joyal-output-1.png"
+id="heatmap-cells-by-cluster-cd73ft-joyal" />
+
 ## Correlation on the UMAP
 
-The same correlations, one panel per reference class. A class with a population
-in this batch lights up somewhere; a class without one has nowhere bright to sit.
+The same correlations, one panel per reference class. A class with a
+population in this batch lights up somewhere; a class without one has
+nowhere bright to sit.
 
-```{python}
-#| label: umap-cell-correlation-cd73ft-joyal
+``` python
 # each panel on its own scale, over the standardized correlations. Standardizing is what makes
 # a panel about preference rather than depth, and it happens once above rather than here.
 umap_coords = cd73ft_joyal.obsm["X_umap"]
@@ -1167,13 +1240,17 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/umap-cell-correlation-cd73ft-joyal-output-1.png"
+id="umap-cell-correlation-cd73ft-joyal" />
+
 ## Correlation by cell type
 
-The same correlations grouped by the calls the refinement settled on. A diagonal here is the
-check that the refinement worked: each cell type should correlate best with its own class.
+The same correlations grouped by the calls the refinement settled on. A
+diagonal here is the check that the refinement worked: each cell type
+should correlate best with its own class.
 
-```{python}
-#| label: annotate-clusters-cd73ft-joyal
+``` python
 # the call is the best-correlating reference class. The marker scores stay in the document
 # as an independent read on the same question — where the two disagree, the disagreement is
 # the thing to look at before writing an override.
@@ -1193,8 +1270,7 @@ cd73ft_joyal.uns["cell_type_colors"] = [
 ]
 ```
 
-```{python}
-#| label: refine-cell-types-cd73ft-joyal
+``` python
 # the reference calls a whole cluster one class, so a population that never forms its own
 # cluster cannot be named from the cluster call alone. The per-cell correlations above say
 # where that happened: a class a real share of a cluster's cells correlate best with is a
@@ -1230,8 +1306,7 @@ cd73ft_joyal.uns["cell_type_colors"] = [
 ]
 ```
 
-```{python}
-#| label: heatmap-cells-by-type-cd73ft-joyal
+``` python
 # the same correlations grouped by the call the refinement settled on rather than by cluster,
 # and scaled per row for the same reason. A diagonal is the check that it worked.
 mean_by_type = cell_correlation.groupby(cd73ft_joyal.obs["cell_type"], observed=True).mean()
@@ -1253,10 +1328,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/heatmap-cells-by-type-cd73ft-joyal-output-1.png"
+id="heatmap-cells-by-type-cd73ft-joyal" />
+
 ## Preliminary cell types on the UMAP
 
-```{python}
-#| label: umap-cell-types-cd73ft-joyal
+``` python
 plt.rcParams["figure.figsize"] = (6.5, 4.3)
 
 ax = sc.pl.umap(
@@ -1269,10 +1347,13 @@ ax.set_aspect("equal", adjustable="datalim")
 plt.show()
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/umap-cell-types-cd73ft-joyal-output-1.png"
+id="umap-cell-types-cd73ft-joyal" />
+
 ## Txn1 on the UMAP
 
-```{python}
-#| label: umap-txn1-cd73ft-joyal
+``` python
 fig, axs = plt.subplots(2, 1, height_ratios=[1, 0.22], figsize=(4.3, 3.9),
                         constrained_layout=True)
 
@@ -1293,10 +1374,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/umap-txn1-cd73ft-joyal-output-1.png"
+id="umap-txn1-cd73ft-joyal" />
+
 ## Txn1 by cell type
 
-```{python}
-#| label: txn1-violin-celltype-cd73ft-joyal
+``` python
 txn1_df = sc.get.obs_df(cd73ft_joyal, keys=["TXN1", "cell_type", "condition", "timepoint"])
 
 fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
@@ -1327,10 +1411,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/txn1-violin-celltype-cd73ft-joyal-output-1.png"
+id="txn1-violin-celltype-cd73ft-joyal" />
+
 ## Txn1 by cell type and condition
 
-```{python}
-#| label: txn1-violin-condition-cd73ft-joyal
+``` python
 condition_palette = dict(zip(cd73ft_joyal.obs["condition"].cat.categories,
                              cd73ft_joyal.uns["condition_colors"]))
 
@@ -1352,10 +1439,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/txn1-violin-condition-cd73ft-joyal-output-1.png"
+id="txn1-violin-condition-cd73ft-joyal" />
+
 ## Txn1 by cell type and timepoint
 
-```{python}
-#| label: txn1-violin-timepoint-cd73ft-joyal
+``` python
 timepoint_palette = dict(zip(cd73ft_joyal.obs["timepoint"].cat.categories,
                              cd73ft_joyal.uns["timepoint_colors"]))
 
@@ -1377,10 +1467,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/txn1-violin-timepoint-cd73ft-joyal-output-1.png"
+id="txn1-violin-timepoint-cd73ft-joyal" />
+
 ## Txn1 across the design
 
-```{python}
-#| label: umap-txn1-stratified-cd73ft-joyal
+``` python
 # laid out like the violin slides below: timepoint down the rows, condition across the
 # columns, so the same comparison sits in the same direction in every Txn1 figure
 condition_order = list(cd73ft_joyal.obs["condition"].cat.categories)
@@ -1427,10 +1520,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/umap-txn1-stratified-cd73ft-joyal-output-1.png"
+id="umap-txn1-stratified-cd73ft-joyal" />
+
 ## Txn1 by cell type across the design
 
-```{python}
-#| label: txn1-violin-stratified-cd73ft-joyal
+``` python
 cell_type_order = list(cd73ft_joyal.obs["cell_type"].cat.categories)
 condition_order = list(cd73ft_joyal.obs["condition"].cat.categories)
 timepoints = list(cd73ft_joyal.obs["timepoint"].cat.categories)
@@ -1464,10 +1560,13 @@ plt.show()
 plt.close(fig)
 ```
 
+<img
+src="txn1-expression-retina_files/figure-commonmark/txn1-violin-stratified-cd73ft-joyal-output-1.png"
+id="txn1-violin-stratified-cd73ft-joyal" />
+
 ## Txn1 by cell type across the design, grouped by timepoint
 
-```{python}
-#| label: txn1-violin-stratified-by-condition-cd73ft-joyal
+``` python
 timepoint_palette = dict(zip(cd73ft_joyal.obs["timepoint"].cat.categories,
                              cd73ft_joyal.uns["timepoint_colors"]))
 
@@ -1499,3 +1598,7 @@ for label in axes[-1][0].get_xticklabels():
 plt.show()
 plt.close(fig)
 ```
+
+<img
+src="txn1-expression-retina_files/figure-commonmark/txn1-violin-stratified-by-condition-cd73ft-joyal-output-1.png"
+id="txn1-violin-stratified-by-condition-cd73ft-joyal" />

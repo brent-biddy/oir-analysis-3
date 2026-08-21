@@ -42,10 +42,11 @@ get named.
 With cell types in hand, the rest is the Txn1 readout: Txn1 on the UMAP and as violins, broken
 out by cell type, by condition, by timepoint, and across the full condition-by-timepoint design.
 
-Everything lives in one Quarto document, `oir_analysis.qmd`. There is no pipeline and no scripts.
+Everything lives in one Quarto document, `txn1-expression-retina.qmd`. There is no pipeline and
+no scripts.
 
-**→ [`report.md`](report.md) is the rendered analysis, every figure inline.** Nothing needs to be
-installed to read it.
+**→ [`reports/txn1-expression-retina.md`](reports/txn1-expression-retina.md) is the rendered
+analysis, every figure inline.** Nothing needs to be installed to read it.
 
 ## Running it
 
@@ -88,12 +89,14 @@ tracebacks, so it's worth doing before the first render rather than after.
 ### 4. Render
 
 Now we can render. The document builds three formats, and we'll ask for one at a time — a bare
-`quarto render` builds all three and re-executes the whole analysis once per format.
+`quarto render` builds all three and re-executes the whole analysis once per format. Everything
+rendered goes to `reports/`, which is what `--output-dir` is doing here; leave it off and the
+render lands in the repo root instead.
 
 ```bash
-quarto render oir_analysis.qmd --to html    # the working report
-quarto render oir_analysis.qmd --to pptx    # the deck
-quarto render oir_analysis.qmd --to gfm     # report.md, the copy GitHub renders
+quarto render txn1-expression-retina.qmd --to html --output-dir reports   # the working report
+quarto render txn1-expression-retina.qmd --to pptx --output-dir reports   # the deck
+quarto render txn1-expression-retina.qmd --to gfm  --output-dir reports   # the copy GitHub renders
 ```
 
 The first render downloads ~3.7 GB — 226 MB of counts from GEO and a 3.5 GB atlas from
@@ -120,9 +123,10 @@ the figures that actually changed show up.
 ## Layout
 
 ```
-├── oir_analysis.qmd         the analysis
-├── report.md                the gfm render, committed so GitHub shows it
-├── oir_analysis_files/      report.md's figures
+├── txn1-expression-retina.qmd    the analysis
 ├── environment.yml
-└── data/                    downloads and saved objects (gitignored, reproducible)
+├── reports/                      everything the document renders to
+│   ├── txn1-expression-retina.md         the gfm render, committed so GitHub shows it
+│   └── txn1-expression-retina_files/     its figures
+└── data/                         downloads and saved objects (gitignored, reproducible)
 ```
