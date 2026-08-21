@@ -24,6 +24,7 @@ from urllib.request import urlretrieve      # used to download query and referen
 import anndata as ad                        # used to load data
 import matplotlib.colors as mcolors         # used to convert palette colours to hex
 import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle      # used to box the settled clusters
 import numpy as np
 import pandas as pd
 import scanpy as sc
@@ -321,6 +322,54 @@ else:
         mcolors.to_hex(plt.cm.tab20.colors[(int(label) - 1) % 20]) for label in ranked_labels
     ]
 
+
+    # correlated against the reference here rather than further down, so it is saved with the
+    # object and later renders read it back instead of ranking the matrix again. It belongs to
+    # these cells and these genes, which is what this guard already decides.
+    #
+    # every shared gene, where the cluster-level correlation uses variable genes only. A
+    # centroid is dense, so its housekeeping bulk lifts all twelve classes together and flattens
+    # the differences; a single cell is 97% zero over those same variable genes and needs every
+    # gene it can get. Widening to all of them moves agreement with the cluster call from 90%
+    # to 95%.
+    shared_genes = [gene for gene in wr_joyal.var_names if gene in reference_centroids.var_names]
+
+    ranked_cells = pd.DataFrame(
+        np.asarray(wr_joyal[:, shared_genes].X.todense())
+    ).rank(axis=1).to_numpy()
+    ranked_classes = pd.DataFrame(
+        reference_centroids[:, shared_genes].X, index=reference_centroids.obs_names
+    ).rank(axis=1).to_numpy()
+
+    # Spearman, written out rather than looped so all twelve classes come out of one product
+    ranked_cells = ranked_cells - ranked_cells.mean(axis=1, keepdims=True)
+    ranked_classes = ranked_classes - ranked_classes.mean(axis=1, keepdims=True)
+    cell_correlation = pd.DataFrame(
+        (ranked_cells @ ranked_classes.T) / np.sqrt(
+            (ranked_cells ** 2).sum(axis=1)[:, None] * (ranked_classes ** 2).sum(axis=1)[None, :]
+        ),
+        index=wr_joyal.obs_names,
+        columns=reference_centroids.obs_names,
+    )
+
+    # standardized within each cell, once, because everything below compares cells with each
+    # other. A cell's correlation to every class rises with how many genes it captured, at 0.89
+    # to 0.96 across all twelve, so the raw numbers are comparable within a cell and not between
+    # two. One shallow rod cell here runs 0.056 to 0.100 across the twelve and one deep Muller
+    # cell runs 0.360 to 0.459: the first cell's best match is below the second cell's worst.
+    # Subtracting each cell's own mean and dividing by its own spread leaves which classes it
+    # preferred, which is the comparable part. It cannot change which class is largest, so the
+    # calls are the same either way. Stored standardized, because that is what every figure
+    # downstream reads.
+    cell_correlation = cell_correlation.sub(
+        cell_correlation.mean(axis=1), axis=0
+    ).div(cell_correlation.std(axis=1), axis=0)
+
+    # one obs column per reference class, prefixed so the twelve read as a family and can be
+    # handed to sc.pl.umap by name
+    for cell_class in cell_correlation.columns:
+        wr_joyal.obs[f"corr_{cell_class}"] = cell_correlation[cell_class].to_numpy()
+
     wr_joyal.write_h5ad(wr_joyal_clustered_path)
 
 wr_joyal
@@ -329,7 +378,7 @@ wr_joyal
 </details>
 
     AnnData object with n_obs × n_vars = 15143 × 19084
-        obs: 'condition', 'timepoint', 'prep', 'lab', 'replicate', 'batch', 'n_genes_by_log1p', 'total_log1p', 'total_log1p_mt', 'pct_log1p_mt', 'total_log1p_ribo', 'pct_log1p_ribo', 'total_log1p_hb', 'pct_log1p_hb', 'leiden_res_0.40_v0', 'leiden_res_0.40_v1'
+        obs: 'condition', 'timepoint', 'prep', 'lab', 'replicate', 'batch', 'n_genes_by_log1p', 'total_log1p', 'total_log1p_mt', 'pct_log1p_mt', 'total_log1p_ribo', 'pct_log1p_ribo', 'total_log1p_hb', 'pct_log1p_hb', 'leiden_res_0.40_v0', 'leiden_res_0.40_v1', 'corr_AC', 'corr_Astrocyte', 'corr_BC', 'corr_Cone', 'corr_Endothelial', 'corr_HC', 'corr_MG', 'corr_Microglia', 'corr_Pericyte', 'corr_RGC', 'corr_RPE', 'corr_Rod'
         var: 'mt', 'ribo', 'hb', 'n_cells_by_log1p', 'mean_log1p', 'pct_dropout_by_log1p', 'total_log1p', 'n_cells', 'highly_variable', 'means', 'dispersions', 'dispersions_norm'
         uns: 'batch_colors', 'condition_colors', 'hvg', 'lab_colors', 'leiden_res_0.40_v0', 'leiden_res_0.40_v1_colors', 'neighbors', 'pca', 'prep_colors', 'timepoint_colors', 'umap'
         obsm: 'X_pca', 'X_umap'
@@ -513,97 +562,6 @@ plt.show()
 src="txn1-expression-retina_files/figure-commonmark/umap-clusters-v2-wr-joyal-output-1.png"
 id="umap-clusters-v2-wr-joyal" />
 
-## Correlation with the reference
-
-Correlating each cell against the same centroids says which clusters
-hold more than one cell type, without needing a marker panel to name the
-second one.
-
-<details>
-<summary>Code</summary>
-
-``` python
-# every shared gene here, where the cluster-level correlation above uses variable genes only.
-# A centroid is dense, so its housekeeping bulk lifts all twelve classes together and flattens
-# the differences; a single cell is 97% zero over those same variable genes and needs every
-# gene it can get. Widening to all of them moves agreement with the cluster call from 90% to 95%.
-shared_genes = [gene for gene in wr_joyal.var_names if gene in reference_centroids.var_names]
-
-ranked_cells = pd.DataFrame(np.asarray(wr_joyal[:, shared_genes].X.todense())).rank(axis=1).to_numpy()
-ranked_classes = pd.DataFrame(
-    reference_centroids[:, shared_genes].X, index=reference_centroids.obs_names
-).rank(axis=1).to_numpy()
-
-# Spearman again, written out rather than looped so all twelve classes come out of one product
-ranked_cells = ranked_cells - ranked_cells.mean(axis=1, keepdims=True)
-ranked_classes = ranked_classes - ranked_classes.mean(axis=1, keepdims=True)
-cell_correlation = pd.DataFrame(
-    (ranked_cells @ ranked_classes.T) / np.sqrt(
-        (ranked_cells ** 2).sum(axis=1)[:, None] * (ranked_classes ** 2).sum(axis=1)[None, :]
-    ),
-    index=wr_joyal.obs_names,
-    columns=reference_centroids.obs_names,
-)
-
-# standardized within each cell, once, because everything below compares cells with each
-# other. A cell's correlation to every class rises with how many genes it captured, at 0.89 to
-# 0.96 across all twelve, so the raw numbers are comparable within a cell and not between two.
-# One shallow rod cell here runs 0.056 to 0.100 across the twelve and one deep Muller cell runs
-# 0.360 to 0.459: the first cell's best match is below the second cell's worst. Subtracting each
-# cell's own mean and dividing by its own spread leaves which classes it preferred, which is the
-# comparable part. It cannot change which class is largest, so the calls are the same either way.
-cell_correlation = cell_correlation.sub(cell_correlation.mean(axis=1), axis=0).div(
-    cell_correlation.std(axis=1), axis=0
-)
-
-wr_joyal.obs["cell_call"] = pd.Categorical(
-    cell_correlation.idxmax(axis=1),
-    categories=sorted(reference_centroids.obs_names),
-)
-
-# read by the refinement below, and shown there as the purity column
-cell_composition = pd.crosstab(wr_joyal.obs[dendrogram_key], wr_joyal.obs["cell_call"])
-```
-
-</details>
-
-## Per-cell calls on the UMAP
-
-The same embedding, coloured by each cell’s own best-correlating
-reference class rather than by the cluster it fell in. Every cell
-carries a call here, made from that one cell’s correlations and
-independent of its neighbours, so a cluster showing more than one colour
-is a cluster whose cells do not all prefer the same class.
-
-<details>
-<summary>Code</summary>
-
-``` python
-# keyed on every class in the reference rather than only the ones called, so a class keeps its
-# colour here, on the cell type UMAP below, and in every violin after it
-cell_call_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20))
-wr_joyal.uns["cell_call_colors"] = [
-    cell_call_palette[cell_class] for cell_class in wr_joyal.obs["cell_call"].cat.categories
-]
-
-plt.rcParams["figure.figsize"] = (6.5, 4.3)
-
-ax = sc.pl.umap(
-    wr_joyal,
-    color="cell_call",
-    frameon=True,
-    show=False,
-)
-ax.set_aspect("equal", adjustable="datalim")
-plt.show()
-```
-
-</details>
-
-<img
-src="txn1-expression-retina_files/figure-commonmark/umap-cell-calls-wr-joyal-output-1.png"
-id="umap-cell-calls-wr-joyal" />
-
 ## QC metrics
 
 Let’s look at the QC metrics for the batch as a whole. Each panel is one
@@ -699,6 +657,128 @@ plt.close(fig)
 src="txn1-expression-retina_files/figure-commonmark/qc-violin-by-cluster-wr-joyal-output-1.png"
 id="qc-violin-by-cluster-wr-joyal" />
 
+## Correlation with the reference
+
+Correlating each cell against the same centroids says which clusters
+hold more than one cell type, without needing a marker panel to name the
+second one.
+
+<details>
+<summary>Code</summary>
+
+``` python
+# computed in the clustering step and saved with the object, so this reads it back. The
+# columns lose their prefix here, so a call is the class name rather than the column name
+reference_classes = sorted(reference_centroids.obs_names)
+correlation_keys = [f"corr_{cell_class}" for cell_class in reference_classes]
+cell_correlation = wr_joyal.obs[correlation_keys].rename(
+    columns=dict(zip(correlation_keys, reference_classes))
+)
+
+wr_joyal.obs["cell_type_per_cell"] = pd.Categorical(
+    cell_correlation.idxmax(axis=1),
+    categories=sorted(reference_centroids.obs_names),
+)
+
+cell_composition = pd.crosstab(wr_joyal.obs[dendrogram_key], wr_joyal.obs["cell_type_per_cell"])
+```
+
+</details>
+
+## Per-cell calls on the UMAP
+
+The same embedding, coloured by each cell’s own best-correlating
+reference class rather than by the cluster it fell in. Every cell
+carries a call here, made from that one cell’s correlations and
+independent of its neighbours, so a cluster showing more than one colour
+is a cluster whose cells do not all prefer the same class.
+
+<details>
+<summary>Code</summary>
+
+``` python
+# keyed on every class in the reference rather than only the ones called, so a class keeps its
+# colour here, on the cell type UMAP below, and in every violin after it
+call_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20))
+wr_joyal.uns["cell_type_per_cell_colors"] = [
+    call_palette[cell_class] for cell_class in wr_joyal.obs["cell_type_per_cell"].cat.categories
+]
+
+plt.rcParams["figure.figsize"] = (6.5, 4.3)
+
+ax = sc.pl.umap(
+    wr_joyal,
+    color="cell_type_per_cell",
+    frameon=True,
+    show=False,
+)
+ax.set_aspect("equal", adjustable="datalim")
+plt.show()
+```
+
+</details>
+
+<img
+src="txn1-expression-retina_files/figure-commonmark/umap-cell-calls-wr-joyal-output-1.png"
+id="umap-cell-calls-wr-joyal" />
+
+## Correlation on the UMAP
+
+The same correlations, one panel per reference class. A class with a
+population in this batch lights up somewhere; a class without one has
+nowhere bright to sit.
+
+<details>
+<summary>Code</summary>
+
+``` python
+# one panel per class, straight off the obs columns the clustering step wrote. Standardizing
+# is what makes a panel about preference rather than depth, and it happens once up there rather
+# than here, so each panel scales to its own values.
+reference_classes = sorted(reference_centroids.obs_names)
+correlation_keys = [f"corr_{cell_class}" for cell_class in reference_classes]
+
+# a class listed here is clipped to the limits given instead, for when one panel's range is set
+# by a handful of cells and buries the rest:
+#   correlation_clips = {"RPE": (-1, 2), "Rod": (0, 3)}
+# passed only when something is in it, because scanpy reads the two lists positionally and has
+# no entry that means "leave this panel alone"
+correlation_clips = {}
+clip_arguments = {}
+if correlation_clips:
+    clip_arguments = {
+        "vmin": [correlation_clips.get(c, (None, None))[0] for c in reference_classes],
+        "vmax": [correlation_clips.get(c, (None, None))[1] for c in reference_classes],
+    }
+
+plt.rcParams["figure.figsize"] = (2.3, 2.0)      # per panel, so four across come to about 9
+
+axes = sc.pl.umap(
+    wr_joyal,
+    color=correlation_keys,
+    title=reference_classes,                     # the prefix is for obs, not for the reader
+    ncols=4,
+    size=1,                                      # fixed, rather than scaled by cell count
+    frameon=True,
+    show=False,
+    **clip_arguments,
+)
+
+# scanpy labels the axes of every panel, and UMAP1 lands on the title of the panel below it.
+# The frame is worth keeping, the labels are not — the whole figure is one embedding
+for panel in axes:
+    panel.set_xlabel("")
+    panel.set_ylabel("")
+
+plt.show()
+```
+
+</details>
+
+<img
+src="txn1-expression-retina_files/figure-commonmark/umap-cell-correlation-wr-joyal-output-1.png"
+id="umap-cell-correlation-wr-joyal" />
+
 ## Correlation by cluster
 
 The per-cell correlations averaged over each cluster. Where a cluster
@@ -768,41 +848,112 @@ plt.close(fig)
 src="txn1-expression-retina_files/figure-commonmark/heatmap-cells-by-cluster-wr-joyal-output-1.png"
 id="heatmap-cells-by-cluster-wr-joyal" />
 
-## Correlation on the UMAP
+## Call composition by cluster
 
-The same correlations, one panel per reference class. A class with a
-population in this batch lights up somewhere; a class without one has
-nowhere bright to sit.
+The same per-cell calls counted up inside each cluster. Every row is a
+cluster and every column a reference class, and a square is the share of
+that cluster’s cells whose own best match was that class — so a row sums
+to one. The columns are ordered by which class each cluster leads with,
+which puts the matches on the diagonal. A boxed square is a class that
+took at least the threshold share of its cluster’s cells; a cluster with
+no boxed square did not concentrate on any one class, and its number is
+starred on the axis.
 
 <details>
 <summary>Code</summary>
 
 ``` python
-# each panel on its own scale, over the standardized correlations. Standardizing is what makes
-# a panel about preference rather than depth, and it happens once above rather than here.
-umap_coords = wr_joyal.obsm["X_umap"]
+# a share of the cluster rather than a count, so a small cluster is read on the same scale as
+# a large one and a row sums to one
+composition = cell_composition.div(cell_composition.sum(axis=1), axis=0)
 
-# each panel scales to its own values. A class listed here is clipped to the limits given
-# instead, for when one panel's range is set by a handful of cells and buries the rest:
-#   correlation_clips = {"RPE": (-1, 2), "Rod": (0, 3)}
-correlation_clips = {}
+composition = composition.reindex(columns=sorted(reference_centroids.obs_names), fill_value=0.0)
 
-fig, axes = plt.subplots(3, 4, figsize=(9, 6.0), constrained_layout=True)
-for ax, reference_class in zip(axes.flat, cell_correlation.columns):
-    low, high = correlation_clips.get(reference_class, (None, None))
-    points = ax.scatter(umap_coords[:, 0], umap_coords[:, 1], s=1, linewidths=0,
-                        c=cell_correlation[reference_class].to_numpy(), cmap="viridis",
-                        vmin=low, vmax=high)
-    ax.set_title(reference_class, fontsize=9)
-    ax.set_aspect("equal", adjustable="datalim")
-    ax.set_xticks([])
-    ax.set_yticks([])
-    colorbar = fig.colorbar(points, ax=ax, shrink=0.75, pad=0.02, aspect=12)
-    colorbar.ax.tick_params(labelsize=6)
+# walk the clusters in order and take each one's largest class; a class already placed is
+# skipped, and any class no cluster leads with is appended, so the matches read as a diagonal.
+# The columns are this batch's own order, so the two preparations no longer line up column for
+# column — the labels are what to read across, not the position.
+class_order = []
+for cluster in composition.index:
+    largest = composition.loc[cluster].idxmax()
+    if largest not in class_order:
+        class_order.append(largest)
+class_order += [c for c in composition.columns if c not in class_order]
+composition = composition[class_order]
 
-for empty_ax in axes.flat[len(cell_correlation.columns):]:
-    empty_ax.axis("off")
+# the share one class has to take for the cluster to be settled on it. Nothing here reads it:
+# the box is a flag to look at, and the annotation below still calls every cluster by the
+# correlation argmax.
+purity_threshold = 0.9
 
+values = composition.to_numpy()
+settled = values.max(axis=1) >= purity_threshold      # a cluster with no boxed class is flagged
+
+# the call this figure implies: a settled cluster takes its majority class, and a flagged one
+# is named Ambiguous rather than guessed at. This is the document's cell type — every figure
+# below reads it.
+cluster_calls = {
+    cluster: (composition.loc[cluster].idxmax() if is_settled else "Ambiguous")
+    for cluster, is_settled in zip(composition.index, settled)
+}
+
+# a cluster the figures further down settled, named here by hand and keyed on its v2 number.
+# This is the one place a call is made by a person rather than by the threshold, and it is why
+# the threshold can stay strict: a large cluster that misses it is resolved by looking rather
+# than by moving the line. Empty means nothing has been resolved yet.
+resolved_clusters = {}
+cluster_calls.update(resolved_clusters)
+
+cluster_types = sorted({call for call in cluster_calls.values() if call != "Ambiguous"})
+if "Ambiguous" in cluster_calls.values():
+    cluster_types.append("Ambiguous")             # last, so it sits at the end of the legend
+
+wr_joyal.obs["cell_type"] = (
+    wr_joyal.obs[dendrogram_key]
+    .map(cluster_calls)
+    .astype("category")
+    .cat.reorder_categories(cluster_types)
+)
+# the reference classes keep the colours they carry on the call UMAP above; Ambiguous is grey,
+# being the absence of a call rather than a class of its own
+cell_type_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20))
+cell_type_palette["Ambiguous"] = "#cccccc"
+wr_joyal.uns["cell_type_colors"] = [
+    cell_type_palette[cell_type] for cell_type in wr_joyal.obs["cell_type"].cat.categories
+]
+
+fig, ax = plt.subplots(figsize=(9, 4.3), constrained_layout=True)
+image = ax.imshow(values, cmap="viridis", aspect="auto", vmin=0.0, vmax=1.0)
+ax.set_xticks(range(composition.shape[1]), composition.columns, rotation=45, ha="right",
+              fontsize=7)
+# the flagged clusters called out on the axis as well, so they read down the edge without
+# having to find the row that is missing a box. The star goes on at tick time: a tick label's
+# text is regenerated from the formatter, so setting it on the label object afterwards is lost
+cluster_labels = [
+    str(cluster) if is_settled else f"{cluster} *"
+    for cluster, is_settled in zip(composition.index, settled)
+]
+ax.set_yticks(range(composition.shape[0]), cluster_labels, fontsize=7)
+for tick, is_settled in zip(ax.get_yticklabels(), settled):
+    if not is_settled:
+        tick.set_color("#d62728")
+        tick.set_fontweight("bold")
+
+ax.set_xlabel("Reference class", fontsize=9)
+ax.set_ylabel("Cluster", fontsize=9)
+
+for row in range(values.shape[0]):
+    for column in range(values.shape[1]):
+        share = values[row, column]
+        # three decimals, so a share just under the threshold does not round to it and read as
+        # a square that should have been boxed
+        ax.text(column, row, f"{share:.3f}", ha="center", va="center", fontsize=5,
+                color="black" if share > 0.6 else "white")
+        if share >= purity_threshold:
+            ax.add_patch(Rectangle((column - 0.5, row - 0.5), 1, 1, fill=False,
+                                   edgecolor="#d62728", linewidth=1.8))
+
+fig.colorbar(image, ax=ax, shrink=0.6, pad=0.02, aspect=25, label="Share of cluster")
 plt.show()
 plt.close(fig)
 ```
@@ -810,87 +961,16 @@ plt.close(fig)
 </details>
 
 <img
-src="txn1-expression-retina_files/figure-commonmark/umap-cell-correlation-wr-joyal-output-1.png"
-id="umap-cell-correlation-wr-joyal" />
+src="txn1-expression-retina_files/figure-commonmark/heatmap-call-composition-wr-joyal-output-1.png"
+id="heatmap-call-composition-wr-joyal" />
 
-## Cell type calls
+## Cell type calls on the UMAP
 
-Each cluster takes the reference class it correlates with best. The
-per-cell correlations then refine that: where a real share of a
-cluster’s cells prefer some other class, those cells take it instead of
-the cluster’s call.
-
-<details>
-<summary>Code</summary>
-
-``` python
-# the call is the best-correlating reference class. The marker scores stay in the document
-# as an independent read on the same question — where the two disagree, the disagreement is
-# the thing to look at before writing an override.
-cluster_calls = mean_cell_correlation.idxmax(axis=1)
-
-# no calls made by hand yet, so every cluster below is the reference argmax
-cluster_call_overrides = {}
-cluster_calls.update(pd.Series(cluster_call_overrides))
-
-wr_joyal.obs["cell_type"] = wr_joyal.obs[dendrogram_key].map(cluster_calls).astype("category")
-
-# keyed on every class in the reference rather than only the ones called, so a cell type
-# keeps its colour whatever a given resolution happens to find
-cell_type_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20))
-wr_joyal.uns["cell_type_colors"] = [
-    cell_type_palette[cell_type] for cell_type in wr_joyal.obs["cell_type"].cat.categories
-]
-```
-
-</details>
-
-<details>
-<summary>Code</summary>
-
-``` python
-# the reference calls a whole cluster one class, so a population that never forms its own
-# cluster cannot be named from the cluster call alone. The per-cell correlations above say
-# where that happened: a class a real share of a cluster's cells correlate best with is a
-# population inside it, and those cells take that class instead of the cluster's.
-#
-# a share rather than a count, because a handful of cells favouring a class is what dropout
-# does to every cluster; and a count as well, so a small cluster cannot qualify a class on
-# three cells. RPE takes 14% of one cluster here and is excluded by the share, which is the
-# right answer for a class with no business in a neural retina prep.
-min_share = 0.25
-min_cells = 10
-
-for cluster in cell_composition.index:
-    counts = cell_composition.loc[cluster]
-    populations = counts[(counts >= min_cells) & (counts / counts.sum() >= min_share)]
-    in_cluster = (wr_joyal.obs[dendrogram_key] == cluster).to_numpy()
-
-    for population in populations.index:
-        if population not in wr_joyal.obs["cell_type"].cat.categories:
-            wr_joyal.obs["cell_type"] = wr_joyal.obs["cell_type"].cat.add_categories([population])
-        # a cell keeps the cluster's call unless its own best class is one that qualified
-        takes = in_cluster & (wr_joyal.obs["cell_call"] == population).to_numpy()
-        wr_joyal.obs.loc[takes, "cell_type"] = population
-
-# a class added above lands at the end of the categories, which would put it last on every
-# axis downstream rather than in with the rest
-wr_joyal.obs["cell_type"] = wr_joyal.obs["cell_type"].cat.remove_unused_categories()
-wr_joyal.obs["cell_type"] = wr_joyal.obs["cell_type"].cat.reorder_categories(
-    sorted(wr_joyal.obs["cell_type"].cat.categories)
-)
-wr_joyal.uns["cell_type_colors"] = [
-    cell_type_palette[cell_type] for cell_type in wr_joyal.obs["cell_type"].cat.categories
-]
-```
-
-</details>
-
-## Preliminary cell types on the UMAP
-
-The same embedding once more, coloured now by the cell type each cell
-was assigned rather than by the cluster it fell in. The types are listed
-in the legend beside the panel.
+The calls the heatmap above implies, drawn on the embedding. A cluster
+whose cells concentrated on one reference class takes that class, and a
+flagged cluster is left Ambiguous in grey rather than named on a split
+vote. This is the cell type every figure below reads, so a cluster stays
+grey in all of them until it is resolved.
 
 <details>
 <summary>Code</summary>
@@ -911,8 +991,493 @@ plt.show()
 </details>
 
 <img
-src="txn1-expression-retina_files/figure-commonmark/umap-cell-types-wr-joyal-output-1.png"
-id="umap-cell-types-wr-joyal" />
+src="txn1-expression-retina_files/figure-commonmark/umap-initial-calls-wr-joyal-output-1.png"
+id="umap-initial-calls-wr-joyal" />
+
+## Flagged clusters on the UMAP
+
+One panel per cluster the composition left ambiguous. Each panel draws
+the whole embedding in grey and then that cluster’s own cells coloured
+by their per-cell call, on the palette the call UMAP uses. A cluster
+holding two populations puts its two colours in two places; a cluster
+whose cells simply disagree puts them on top of each other.
+
+<details>
+<summary>Code</summary>
+
+``` python
+# the clusters the composition could not settle, taken off the call column rather than
+# recomputed, so this figure and the heatmap above can never disagree about which they are
+per_cluster_call = wr_joyal.obs.groupby(dendrogram_key, observed=True)["cell_type"].first()
+flagged_clusters = per_cluster_call.index[per_cluster_call == "Ambiguous"].tolist()
+
+call_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20))
+umap_coords = wr_joyal.obsm["X_umap"]
+
+# drawn with scatter rather than sc.pl.umap, for the grey underlay and a fixed point size —
+# scanpy scales its points by cell count, so a panel of 43 cells would carry much larger
+# points than one of 2,000
+columns = min(len(flagged_clusters), 3)
+rows = int(np.ceil(len(flagged_clusters) / columns))
+fig, axes = plt.subplots(rows, columns, squeeze=False, figsize=(9, 3.2 * rows),
+                         constrained_layout=True)
+
+handles = {}
+for ax, cluster in zip(axes.flat, flagged_clusters):
+    in_cluster = (wr_joyal.obs[dendrogram_key] == cluster).to_numpy()
+    ax.scatter(umap_coords[:, 0], umap_coords[:, 1], s=1, c="#e0e0e0", linewidths=0)
+
+    # each class drawn on its own, so the legend can carry one entry per class across panels
+    calls = wr_joyal.obs["cell_type_per_cell"]
+    for cell_class in calls[in_cluster].value_counts().index:
+        selected = in_cluster & (calls == cell_class).to_numpy()
+        if not selected.any():
+            continue
+        points = ax.scatter(umap_coords[selected, 0], umap_coords[selected, 1], s=2.5,
+                            c=call_palette[cell_class], linewidths=0)
+        handles.setdefault(cell_class, points)
+
+    ax.set_title(f"Cluster {cluster}  (n={in_cluster.sum():,})", fontsize=9)
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+for ax in axes.flat[len(flagged_clusters):]:
+    ax.axis("off")
+
+fig.legend(handles.values(), handles.keys(), title="", fontsize=7, frameon=False,
+           loc="center left", bbox_to_anchor=(1.0, 0.5), markerscale=4)
+plt.show()
+plt.close(fig)
+```
+
+</details>
+
+<img
+src="txn1-expression-retina_files/figure-commonmark/umap-flagged-clusters-wr-joyal-output-1.png"
+id="umap-flagged-clusters-wr-joyal" />
+
+## Resolving cluster 2
+
+Everything about one flagged cluster on a single slide. On the left its
+cells sit on the embedding, coloured by their own per-cell call against
+the rest of the batch in grey. Along the bottom the QC metrics compare
+the cluster’s cells with every other cell in the batch, which is what
+separates a cluster holding two populations from one holding thin cells
+whose calls scatter.
+
+<details>
+<summary>Code</summary>
+
+``` python
+cluster_of_interest = "2"        # the v2 number, changed to look at another flagged cluster
+
+in_cluster = (wr_joyal.obs[dendrogram_key] == cluster_of_interest).to_numpy()
+calls = wr_joyal.obs["cell_type_per_cell"]
+call_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20))
+
+qc_df = sc.get.obs_df(wr_joyal, keys=list(qc_metrics))
+qc_df["group"] = np.where(in_cluster, f"Cluster {cluster_of_interest}", "Other cells")
+group_order = [f"Cluster {cluster_of_interest}", "Other cells"]
+group_palette = dict(zip(group_order, ["#d62728", "#bfbfbf"]))
+
+# the embedding and the two contested correlations across the top, the QC metrics along the
+# bottom, so one slide carries the whole case for a cluster. Ten columns, because the five QC
+# panels each span two of them
+fig, axes = plt.subplot_mosaic(
+    [["umap"] * 5 + ["scatter"] * 5,
+     [qc_key for qc_key in qc_metrics for _ in range(2)]],
+    figsize=(9, 6.2), height_ratios=[1.5, 1], constrained_layout=True,
+)
+
+umap_coords = wr_joyal.obsm["X_umap"]
+axes["umap"].scatter(umap_coords[:, 0], umap_coords[:, 1], s=1, c="#e0e0e0", linewidths=0)
+for cell_class, count in calls[in_cluster].value_counts().items():
+    if count == 0:
+        continue
+    selected = in_cluster & (calls == cell_class).to_numpy()
+    share = count / in_cluster.sum()
+    axes["umap"].scatter(umap_coords[selected, 0], umap_coords[selected, 1], s=6,
+                         c=call_palette[cell_class], linewidths=0,
+                         label=f"{cell_class}  {share:.0%}")
+
+axes["umap"].set_title(f"Cluster {cluster_of_interest}  (n={in_cluster.sum():,})", fontsize=10)
+axes["umap"].set_aspect("equal", adjustable="datalim")
+axes["umap"].set_xticks([])
+axes["umap"].set_yticks([])
+axes["umap"].legend(title="", fontsize=7, frameon=False, loc="upper left", markerscale=3)
+
+# the two classes most of the cluster's cells call, which is the choice the slide is about.
+# Every cell of the cluster placed by how well it correlates with each — two arms off the
+# diagonal is two populations, one cloud straddling it is one.
+contested = calls[in_cluster].value_counts().index[:2].tolist()
+for cell_class, count in calls[in_cluster].value_counts().items():
+    if count == 0:
+        continue
+    selected = in_cluster & (calls == cell_class).to_numpy()
+    axes["scatter"].scatter(wr_joyal.obs.loc[selected, f"corr_{contested[0]}"],
+                            wr_joyal.obs.loc[selected, f"corr_{contested[1]}"],
+                            s=14, c=call_palette[cell_class], linewidths=0)
+
+# the diagonal, where a cell correlates equally with both
+span = [
+    min(wr_joyal.obs.loc[in_cluster, f"corr_{cell_class}"].min() for cell_class in contested),
+    max(wr_joyal.obs.loc[in_cluster, f"corr_{cell_class}"].max() for cell_class in contested),
+]
+axes["scatter"].plot(span, span, color="#888888", linewidth=0.8, linestyle="--", zorder=0)
+axes["scatter"].set_title("Correlation, the two contested classes", fontsize=10)
+axes["scatter"].set_xlabel(contested[0], fontsize=8)
+axes["scatter"].set_ylabel(contested[1], fontsize=8)
+axes["scatter"].tick_params(labelsize=6)
+sns.despine(ax=axes["scatter"])
+
+for qc_key, qc_label in qc_metrics.items():
+    ax = axes[qc_key]
+    sns.violinplot(data=qc_df, x="group", y=qc_key, order=group_order, hue="group",
+                   hue_order=group_order, palette=group_palette, legend=False, cut=0,
+                   density_norm="width", inner="box", inner_kws=violin_inner_kws,
+                   linewidth=0.5, saturation=1, ax=ax)
+    ax.set_title(qc_label, fontsize=8)
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    ax.tick_params(axis="x", labelsize=6)
+    ax.tick_params(axis="y", labelsize=6)
+    ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+    ax.set_axisbelow(True)
+    sns.despine(ax=ax)
+
+plt.show()
+plt.close(fig)
+```
+
+</details>
+
+<img
+src="txn1-expression-retina_files/figure-commonmark/resolve-cluster-2-wr-joyal-output-1.png"
+id="resolve-cluster-2-wr-joyal" />
+
+Pericyte and endothelial sit at opposite ends of the island rather than
+intermixed, and the QC metrics give no reason to think either group is
+thin — genes detected and total expression both run above the rest of
+the batch. Two populations, so the cells take their own per-cell calls.
+
+One cell calls RPE. Its correlations are flat across the top — RPE 1.20,
+Pericyte 1.14, Astrocyte 1.11 — so nothing is really being claimed about
+it either way, and at one cell it makes no difference which way it
+falls.
+
+<details>
+<summary>Code</summary>
+
+``` python
+# the call, written here rather than collected somewhere else, so it sits with the figure it
+# was read off. A string column while the resolutions are being made; the section below turns
+# it back into a categorical once they are all in.
+#
+# a mixture, so the cells take their own calls. Naming the classes by hand would mean deciding
+# in advance what the cluster is allowed to contain, and cluster 3 below is the argument against
+# that: its minority call turned out to be a real population.
+cell_type = wr_joyal.obs["cell_type"].astype(str)
+cell_type[in_cluster] = wr_joyal.obs["cell_type_per_cell"].astype(str)[in_cluster]
+wr_joyal.obs["cell_type"] = cell_type
+```
+
+</details>
+
+## Resolving cluster 3
+
+Everything about one flagged cluster on a single slide. On the left its
+cells sit on the embedding, coloured by their own per-cell call against
+the rest of the batch in grey. Along the bottom the QC metrics compare
+the cluster’s cells with every other cell in the batch, which is what
+separates a cluster holding two populations from one holding thin cells
+whose calls scatter.
+
+<details>
+<summary>Code</summary>
+
+``` python
+cluster_of_interest = "3"        # the v2 number, changed to look at another flagged cluster
+
+in_cluster = (wr_joyal.obs[dendrogram_key] == cluster_of_interest).to_numpy()
+calls = wr_joyal.obs["cell_type_per_cell"]
+call_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20))
+
+qc_df = sc.get.obs_df(wr_joyal, keys=list(qc_metrics))
+qc_df["group"] = np.where(in_cluster, f"Cluster {cluster_of_interest}", "Other cells")
+group_order = [f"Cluster {cluster_of_interest}", "Other cells"]
+group_palette = dict(zip(group_order, ["#d62728", "#bfbfbf"]))
+
+# the embedding and the two contested correlations across the top, the QC metrics along the
+# bottom, so one slide carries the whole case for a cluster. Ten columns, because the five QC
+# panels each span two of them
+fig, axes = plt.subplot_mosaic(
+    [["umap"] * 5 + ["scatter"] * 5,
+     [qc_key for qc_key in qc_metrics for _ in range(2)]],
+    figsize=(9, 6.2), height_ratios=[1.5, 1], constrained_layout=True,
+)
+
+umap_coords = wr_joyal.obsm["X_umap"]
+axes["umap"].scatter(umap_coords[:, 0], umap_coords[:, 1], s=1, c="#e0e0e0", linewidths=0)
+for cell_class, count in calls[in_cluster].value_counts().items():
+    if count == 0:
+        continue
+    selected = in_cluster & (calls == cell_class).to_numpy()
+    share = count / in_cluster.sum()
+    axes["umap"].scatter(umap_coords[selected, 0], umap_coords[selected, 1], s=6,
+                         c=call_palette[cell_class], linewidths=0,
+                         label=f"{cell_class}  {share:.0%}")
+
+axes["umap"].set_title(f"Cluster {cluster_of_interest}  (n={in_cluster.sum():,})", fontsize=10)
+axes["umap"].set_aspect("equal", adjustable="datalim")
+axes["umap"].set_xticks([])
+axes["umap"].set_yticks([])
+axes["umap"].legend(title="", fontsize=7, frameon=False, loc="upper left", markerscale=3)
+
+# the two classes most of the cluster's cells call, which is the choice the slide is about.
+# Every cell of the cluster placed by how well it correlates with each — two arms off the
+# diagonal is two populations, one cloud straddling it is one.
+contested = calls[in_cluster].value_counts().index[:2].tolist()
+for cell_class, count in calls[in_cluster].value_counts().items():
+    if count == 0:
+        continue
+    selected = in_cluster & (calls == cell_class).to_numpy()
+    axes["scatter"].scatter(wr_joyal.obs.loc[selected, f"corr_{contested[0]}"],
+                            wr_joyal.obs.loc[selected, f"corr_{contested[1]}"],
+                            s=14, c=call_palette[cell_class], linewidths=0)
+
+# the diagonal, where a cell correlates equally with both
+span = [
+    min(wr_joyal.obs.loc[in_cluster, f"corr_{cell_class}"].min() for cell_class in contested),
+    max(wr_joyal.obs.loc[in_cluster, f"corr_{cell_class}"].max() for cell_class in contested),
+]
+axes["scatter"].plot(span, span, color="#888888", linewidth=0.8, linestyle="--", zorder=0)
+axes["scatter"].set_title("Correlation, the two contested classes", fontsize=10)
+axes["scatter"].set_xlabel(contested[0], fontsize=8)
+axes["scatter"].set_ylabel(contested[1], fontsize=8)
+axes["scatter"].tick_params(labelsize=6)
+sns.despine(ax=axes["scatter"])
+
+for qc_key, qc_label in qc_metrics.items():
+    ax = axes[qc_key]
+    sns.violinplot(data=qc_df, x="group", y=qc_key, order=group_order, hue="group",
+                   hue_order=group_order, palette=group_palette, legend=False, cut=0,
+                   density_norm="width", inner="box", inner_kws=violin_inner_kws,
+                   linewidth=0.5, saturation=1, ax=ax)
+    ax.set_title(qc_label, fontsize=8)
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    ax.tick_params(axis="x", labelsize=6)
+    ax.tick_params(axis="y", labelsize=6)
+    ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+    ax.set_axisbelow(True)
+    sns.despine(ax=ax)
+
+plt.show()
+plt.close(fig)
+```
+
+</details>
+
+<img
+src="txn1-expression-retina_files/figure-commonmark/resolve-cluster-3-wr-joyal-output-1.png"
+id="resolve-cluster-3-wr-joyal" />
+
+Astrocyte takes 47% of this cluster and Müller glia 39%, and the two sit
+in separate places on the embedding and in two clouds on the scatter,
+closer together than cluster 2’s but still apart.
+
+The further 14% calling RPE are a third population rather than a tail.
+They are low on both axes of the scatter, which on its own would be the
+signature of a cell matching nothing in particular — but they are not
+low everywhere. Their mean standardized correlation to RPE is 2.34,
+against 0.76 for the rest of the cluster and -0.10 across the batch, and
+the weakest of them still sits above the batch’s 99th percentile. They
+also sit apart from the rest of the cluster on the embedding, in a
+tighter group of their own.
+
+They are shallow, at a median 614 genes against the cluster’s 1,591,
+which is worth carrying forward as a caveat. RPE carry-over is expected
+in a whole retina prep, though: the sheet is adherent to the
+photoreceptor layer, and epithelium tends to come through a dissociation
+stressed. Shallow cells with a signature this specific are more likely
+to be the real thing than an artefact of their depth.
+
+Three populations, so the cells take their own per-cell calls.
+
+<details>
+<summary>Code</summary>
+
+``` python
+# a mixture of three, so the cells take their own calls. The RPE cells are specifically high on
+# RPE rather than uniformly low, which is what makes them a population rather than a tail.
+cell_type = wr_joyal.obs["cell_type"].astype(str)
+cell_type[in_cluster] = wr_joyal.obs["cell_type_per_cell"].astype(str)[in_cluster]
+wr_joyal.obs["cell_type"] = cell_type
+```
+
+</details>
+
+## Resolving cluster 9
+
+Everything about one flagged cluster on a single slide. On the left its
+cells sit on the embedding, coloured by their own per-cell call against
+the rest of the batch in grey. Along the bottom the QC metrics compare
+the cluster’s cells with every other cell in the batch, which is what
+separates a cluster holding two populations from one holding thin cells
+whose calls scatter.
+
+<details>
+<summary>Code</summary>
+
+``` python
+cluster_of_interest = "9"        # the v2 number, changed to look at another flagged cluster
+
+in_cluster = (wr_joyal.obs[dendrogram_key] == cluster_of_interest).to_numpy()
+calls = wr_joyal.obs["cell_type_per_cell"]
+call_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20))
+
+qc_df = sc.get.obs_df(wr_joyal, keys=list(qc_metrics))
+qc_df["group"] = np.where(in_cluster, f"Cluster {cluster_of_interest}", "Other cells")
+group_order = [f"Cluster {cluster_of_interest}", "Other cells"]
+group_palette = dict(zip(group_order, ["#d62728", "#bfbfbf"]))
+
+# the embedding and the two contested correlations across the top, the QC metrics along the
+# bottom, so one slide carries the whole case for a cluster. Ten columns, because the five QC
+# panels each span two of them
+fig, axes = plt.subplot_mosaic(
+    [["umap"] * 5 + ["scatter"] * 5,
+     [qc_key for qc_key in qc_metrics for _ in range(2)]],
+    figsize=(9, 6.2), height_ratios=[1.5, 1], constrained_layout=True,
+)
+
+umap_coords = wr_joyal.obsm["X_umap"]
+axes["umap"].scatter(umap_coords[:, 0], umap_coords[:, 1], s=1, c="#e0e0e0", linewidths=0)
+for cell_class, count in calls[in_cluster].value_counts().items():
+    if count == 0:
+        continue
+    selected = in_cluster & (calls == cell_class).to_numpy()
+    share = count / in_cluster.sum()
+    axes["umap"].scatter(umap_coords[selected, 0], umap_coords[selected, 1], s=6,
+                         c=call_palette[cell_class], linewidths=0,
+                         label=f"{cell_class}  {share:.0%}")
+
+axes["umap"].set_title(f"Cluster {cluster_of_interest}  (n={in_cluster.sum():,})", fontsize=10)
+axes["umap"].set_aspect("equal", adjustable="datalim")
+axes["umap"].set_xticks([])
+axes["umap"].set_yticks([])
+axes["umap"].legend(title="", fontsize=7, frameon=False, loc="upper left", markerscale=3)
+
+# the two classes most of the cluster's cells call, which is the choice the slide is about.
+# Every cell of the cluster placed by how well it correlates with each — two arms off the
+# diagonal is two populations, one cloud straddling it is one.
+contested = calls[in_cluster].value_counts().index[:2].tolist()
+for cell_class, count in calls[in_cluster].value_counts().items():
+    if count == 0:
+        continue
+    selected = in_cluster & (calls == cell_class).to_numpy()
+    axes["scatter"].scatter(wr_joyal.obs.loc[selected, f"corr_{contested[0]}"],
+                            wr_joyal.obs.loc[selected, f"corr_{contested[1]}"],
+                            s=14, c=call_palette[cell_class], linewidths=0)
+
+# the diagonal, where a cell correlates equally with both
+span = [
+    min(wr_joyal.obs.loc[in_cluster, f"corr_{cell_class}"].min() for cell_class in contested),
+    max(wr_joyal.obs.loc[in_cluster, f"corr_{cell_class}"].max() for cell_class in contested),
+]
+axes["scatter"].plot(span, span, color="#888888", linewidth=0.8, linestyle="--", zorder=0)
+axes["scatter"].set_title("Correlation, the two contested classes", fontsize=10)
+axes["scatter"].set_xlabel(contested[0], fontsize=8)
+axes["scatter"].set_ylabel(contested[1], fontsize=8)
+axes["scatter"].tick_params(labelsize=6)
+sns.despine(ax=axes["scatter"])
+
+for qc_key, qc_label in qc_metrics.items():
+    ax = axes[qc_key]
+    sns.violinplot(data=qc_df, x="group", y=qc_key, order=group_order, hue="group",
+                   hue_order=group_order, palette=group_palette, legend=False, cut=0,
+                   density_norm="width", inner="box", inner_kws=violin_inner_kws,
+                   linewidth=0.5, saturation=1, ax=ax)
+    ax.set_title(qc_label, fontsize=8)
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    ax.tick_params(axis="x", labelsize=6)
+    ax.tick_params(axis="y", labelsize=6)
+    ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+    ax.set_axisbelow(True)
+    sns.despine(ax=ax)
+
+plt.show()
+plt.close(fig)
+```
+
+</details>
+
+<img
+src="txn1-expression-retina_files/figure-commonmark/resolve-cluster-9-wr-joyal-output-1.png"
+id="resolve-cluster-9-wr-joyal" />
+
+AC takes 90% of this cluster, and the tenth that calls something else is
+a fringe rather than a population. On the scatter the AC cells are one
+dense cloud and the BC-called cells trail off its edge toward the
+bipolar territory; on the embedding they sit along the boundary between
+the two. There is no second cloud to split on, and the cluster is not
+thin — it runs above the rest of the batch on genes detected. One
+population.
+
+<details>
+<summary>Code</summary>
+
+``` python
+# not a mixture, so no split: one class for the whole cluster. Taking the per-cell calls here
+# would scatter ninety BC and sixty Rod cells through the middle of the amacrine territory, and
+# the scatter above says those are the fringe of one cloud rather than clouds of their own
+cell_type = wr_joyal.obs["cell_type"].astype(str)
+cell_type[in_cluster] = "AC"
+wr_joyal.obs["cell_type"] = cell_type
+```
+
+</details>
+
+## Cell types on the UMAP
+
+The cell types after the resolutions above, which is the annotation
+every figure below reads. A cluster nobody has resolved yet is still
+Ambiguous, in grey.
+
+<details>
+<summary>Code</summary>
+
+``` python
+# Ambiguous last, so it sits at the end of the legend rather than alphabetically among the
+# classes; a class that no longer has any cells drops out on its own
+cell_types = sorted(set(wr_joyal.obs["cell_type"]) - {"Ambiguous"})
+if "Ambiguous" in set(wr_joyal.obs["cell_type"]):
+    cell_types.append("Ambiguous")
+
+wr_joyal.obs["cell_type"] = pd.Categorical(wr_joyal.obs["cell_type"], categories=cell_types)
+
+cell_type_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20))
+cell_type_palette["Ambiguous"] = "#cccccc"
+wr_joyal.uns["cell_type_colors"] = [cell_type_palette[cell_type] for cell_type in cell_types]
+
+plt.rcParams["figure.figsize"] = (6.5, 4.3)
+
+ax = sc.pl.umap(
+    wr_joyal,
+    color="cell_type",
+    frameon=True,
+    show=False,
+)
+ax.set_aspect("equal", adjustable="datalim")
+plt.show()
+```
+
+</details>
+
+<img
+src="txn1-expression-retina_files/figure-commonmark/umap-resolved-cell-types-wr-joyal-output-1.png"
+id="umap-resolved-cell-types-wr-joyal" />
 
 ## Txn1 across the design
 
@@ -989,7 +1554,16 @@ the two timepoints, drawn on a shared y axis.
 <summary>Code</summary>
 
 ``` python
-txn1_df = sc.get.obs_df(wr_joyal, keys=["TXN1", "cell_type", "condition", "timepoint"])
+txn1_df = sc.get.obs_df(
+    wr_joyal, keys=["TXN1", "cell_type", "condition", "timepoint"]
+)
+
+# the reference classes on the colours they carry throughout, and Ambiguous grey —
+# those cells are drawn rather than dropped, so a figure never quietly loses them
+cell_type_palette = dict(
+    zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20)
+)
+cell_type_palette["Ambiguous"] = "#cccccc"
 condition_palette = dict(zip(wr_joyal.obs["condition"].cat.categories,
                              wr_joyal.uns["condition_colors"]))
 
@@ -1190,6 +1764,54 @@ else:
         mcolors.to_hex(plt.cm.tab20.colors[(int(label) - 1) % 20]) for label in ranked_labels
     ]
 
+
+    # correlated against the reference here rather than further down, so it is saved with the
+    # object and later renders read it back instead of ranking the matrix again. It belongs to
+    # these cells and these genes, which is what this guard already decides.
+    #
+    # every shared gene, where the cluster-level correlation uses variable genes only. A
+    # centroid is dense, so its housekeeping bulk lifts all twelve classes together and flattens
+    # the differences; a single cell is 97% zero over those same variable genes and needs every
+    # gene it can get. Widening to all of them moves agreement with the cluster call from 90%
+    # to 95%.
+    shared_genes = [gene for gene in cd73ft_joyal.var_names if gene in reference_centroids.var_names]
+
+    ranked_cells = pd.DataFrame(
+        np.asarray(cd73ft_joyal[:, shared_genes].X.todense())
+    ).rank(axis=1).to_numpy()
+    ranked_classes = pd.DataFrame(
+        reference_centroids[:, shared_genes].X, index=reference_centroids.obs_names
+    ).rank(axis=1).to_numpy()
+
+    # Spearman, written out rather than looped so all twelve classes come out of one product
+    ranked_cells = ranked_cells - ranked_cells.mean(axis=1, keepdims=True)
+    ranked_classes = ranked_classes - ranked_classes.mean(axis=1, keepdims=True)
+    cell_correlation = pd.DataFrame(
+        (ranked_cells @ ranked_classes.T) / np.sqrt(
+            (ranked_cells ** 2).sum(axis=1)[:, None] * (ranked_classes ** 2).sum(axis=1)[None, :]
+        ),
+        index=cd73ft_joyal.obs_names,
+        columns=reference_centroids.obs_names,
+    )
+
+    # standardized within each cell, once, because everything below compares cells with each
+    # other. A cell's correlation to every class rises with how many genes it captured, at 0.89
+    # to 0.96 across all twelve, so the raw numbers are comparable within a cell and not between
+    # two. One shallow rod cell here runs 0.056 to 0.100 across the twelve and one deep Muller
+    # cell runs 0.360 to 0.459: the first cell's best match is below the second cell's worst.
+    # Subtracting each cell's own mean and dividing by its own spread leaves which classes it
+    # preferred, which is the comparable part. It cannot change which class is largest, so the
+    # calls are the same either way. Stored standardized, because that is what every figure
+    # downstream reads.
+    cell_correlation = cell_correlation.sub(
+        cell_correlation.mean(axis=1), axis=0
+    ).div(cell_correlation.std(axis=1), axis=0)
+
+    # one obs column per reference class, prefixed so the twelve read as a family and can be
+    # handed to sc.pl.umap by name
+    for cell_class in cell_correlation.columns:
+        cd73ft_joyal.obs[f"corr_{cell_class}"] = cell_correlation[cell_class].to_numpy()
+
     cd73ft_joyal.write_h5ad(cd73ft_joyal_clustered_path)
 
 cd73ft_joyal
@@ -1198,7 +1820,7 @@ cd73ft_joyal
 </details>
 
     AnnData object with n_obs × n_vars = 10329 × 18098
-        obs: 'condition', 'timepoint', 'prep', 'lab', 'replicate', 'batch', 'n_genes_by_log1p', 'total_log1p', 'total_log1p_mt', 'pct_log1p_mt', 'total_log1p_ribo', 'pct_log1p_ribo', 'total_log1p_hb', 'pct_log1p_hb', 'leiden_res_0.50_v0', 'leiden_res_0.50_v1'
+        obs: 'condition', 'timepoint', 'prep', 'lab', 'replicate', 'batch', 'n_genes_by_log1p', 'total_log1p', 'total_log1p_mt', 'pct_log1p_mt', 'total_log1p_ribo', 'pct_log1p_ribo', 'total_log1p_hb', 'pct_log1p_hb', 'leiden_res_0.50_v0', 'leiden_res_0.50_v1', 'corr_AC', 'corr_Astrocyte', 'corr_BC', 'corr_Cone', 'corr_Endothelial', 'corr_HC', 'corr_MG', 'corr_Microglia', 'corr_Pericyte', 'corr_RGC', 'corr_RPE', 'corr_Rod'
         var: 'mt', 'ribo', 'hb', 'n_cells_by_log1p', 'mean_log1p', 'pct_dropout_by_log1p', 'total_log1p', 'n_cells', 'highly_variable', 'means', 'dispersions', 'dispersions_norm'
         uns: 'batch_colors', 'condition_colors', 'hvg', 'lab_colors', 'leiden_res_0.50_v0', 'leiden_res_0.50_v1_colors', 'neighbors', 'pca', 'prep_colors', 'timepoint_colors', 'umap'
         obsm: 'X_pca', 'X_umap'
@@ -1382,97 +2004,6 @@ plt.show()
 src="txn1-expression-retina_files/figure-commonmark/umap-clusters-v2-cd73ft-joyal-output-1.png"
 id="umap-clusters-v2-cd73ft-joyal" />
 
-## Correlation with the reference
-
-Correlating each cell against the same centroids says which clusters
-hold more than one cell type, without needing a marker panel to name the
-second one.
-
-<details>
-<summary>Code</summary>
-
-``` python
-# every shared gene here, where the cluster-level correlation above uses variable genes only.
-# A centroid is dense, so its housekeeping bulk lifts all twelve classes together and flattens
-# the differences; a single cell is 97% zero over those same variable genes and needs every
-# gene it can get. Widening to all of them moves agreement with the cluster call from 90% to 95%.
-shared_genes = [gene for gene in cd73ft_joyal.var_names if gene in reference_centroids.var_names]
-
-ranked_cells = pd.DataFrame(np.asarray(cd73ft_joyal[:, shared_genes].X.todense())).rank(axis=1).to_numpy()
-ranked_classes = pd.DataFrame(
-    reference_centroids[:, shared_genes].X, index=reference_centroids.obs_names
-).rank(axis=1).to_numpy()
-
-# Spearman again, written out rather than looped so all twelve classes come out of one product
-ranked_cells = ranked_cells - ranked_cells.mean(axis=1, keepdims=True)
-ranked_classes = ranked_classes - ranked_classes.mean(axis=1, keepdims=True)
-cell_correlation = pd.DataFrame(
-    (ranked_cells @ ranked_classes.T) / np.sqrt(
-        (ranked_cells ** 2).sum(axis=1)[:, None] * (ranked_classes ** 2).sum(axis=1)[None, :]
-    ),
-    index=cd73ft_joyal.obs_names,
-    columns=reference_centroids.obs_names,
-)
-
-# standardized within each cell, once, because everything below compares cells with each
-# other. A cell's correlation to every class rises with how many genes it captured, at 0.89 to
-# 0.96 across all twelve, so the raw numbers are comparable within a cell and not between two.
-# One shallow rod cell here runs 0.056 to 0.100 across the twelve and one deep Muller cell runs
-# 0.360 to 0.459: the first cell's best match is below the second cell's worst. Subtracting each
-# cell's own mean and dividing by its own spread leaves which classes it preferred, which is the
-# comparable part. It cannot change which class is largest, so the calls are the same either way.
-cell_correlation = cell_correlation.sub(cell_correlation.mean(axis=1), axis=0).div(
-    cell_correlation.std(axis=1), axis=0
-)
-
-cd73ft_joyal.obs["cell_call"] = pd.Categorical(
-    cell_correlation.idxmax(axis=1),
-    categories=sorted(reference_centroids.obs_names),
-)
-
-# read by the refinement below, and shown there as the purity column
-cell_composition = pd.crosstab(cd73ft_joyal.obs[dendrogram_key], cd73ft_joyal.obs["cell_call"])
-```
-
-</details>
-
-## Per-cell calls on the UMAP
-
-The same embedding, coloured by each cell’s own best-correlating
-reference class rather than by the cluster it fell in. Every cell
-carries a call here, made from that one cell’s correlations and
-independent of its neighbours, so a cluster showing more than one colour
-is a cluster whose cells do not all prefer the same class.
-
-<details>
-<summary>Code</summary>
-
-``` python
-# keyed on every class in the reference rather than only the ones called, so a class keeps its
-# colour here, on the cell type UMAP below, and in every violin after it
-cell_call_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20))
-cd73ft_joyal.uns["cell_call_colors"] = [
-    cell_call_palette[cell_class] for cell_class in cd73ft_joyal.obs["cell_call"].cat.categories
-]
-
-plt.rcParams["figure.figsize"] = (6.5, 4.3)
-
-ax = sc.pl.umap(
-    cd73ft_joyal,
-    color="cell_call",
-    frameon=True,
-    show=False,
-)
-ax.set_aspect("equal", adjustable="datalim")
-plt.show()
-```
-
-</details>
-
-<img
-src="txn1-expression-retina_files/figure-commonmark/umap-cell-calls-cd73ft-joyal-output-1.png"
-id="umap-cell-calls-cd73ft-joyal" />
-
 ## QC metrics
 
 Let’s look at the QC metrics for the batch as a whole. Each panel is one
@@ -1568,6 +2099,128 @@ plt.close(fig)
 src="txn1-expression-retina_files/figure-commonmark/qc-violin-by-cluster-cd73ft-joyal-output-1.png"
 id="qc-violin-by-cluster-cd73ft-joyal" />
 
+## Correlation with the reference
+
+Correlating each cell against the same centroids says which clusters
+hold more than one cell type, without needing a marker panel to name the
+second one.
+
+<details>
+<summary>Code</summary>
+
+``` python
+# computed in the clustering step and saved with the object, so this reads it back. The
+# columns lose their prefix here, so a call is the class name rather than the column name
+reference_classes = sorted(reference_centroids.obs_names)
+correlation_keys = [f"corr_{cell_class}" for cell_class in reference_classes]
+cell_correlation = cd73ft_joyal.obs[correlation_keys].rename(
+    columns=dict(zip(correlation_keys, reference_classes))
+)
+
+cd73ft_joyal.obs["cell_type_per_cell"] = pd.Categorical(
+    cell_correlation.idxmax(axis=1),
+    categories=sorted(reference_centroids.obs_names),
+)
+
+cell_composition = pd.crosstab(cd73ft_joyal.obs[dendrogram_key], cd73ft_joyal.obs["cell_type_per_cell"])
+```
+
+</details>
+
+## Per-cell calls on the UMAP
+
+The same embedding, coloured by each cell’s own best-correlating
+reference class rather than by the cluster it fell in. Every cell
+carries a call here, made from that one cell’s correlations and
+independent of its neighbours, so a cluster showing more than one colour
+is a cluster whose cells do not all prefer the same class.
+
+<details>
+<summary>Code</summary>
+
+``` python
+# keyed on every class in the reference rather than only the ones called, so a class keeps its
+# colour here, on the cell type UMAP below, and in every violin after it
+call_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20))
+cd73ft_joyal.uns["cell_type_per_cell_colors"] = [
+    call_palette[cell_class] for cell_class in cd73ft_joyal.obs["cell_type_per_cell"].cat.categories
+]
+
+plt.rcParams["figure.figsize"] = (6.5, 4.3)
+
+ax = sc.pl.umap(
+    cd73ft_joyal,
+    color="cell_type_per_cell",
+    frameon=True,
+    show=False,
+)
+ax.set_aspect("equal", adjustable="datalim")
+plt.show()
+```
+
+</details>
+
+<img
+src="txn1-expression-retina_files/figure-commonmark/umap-cell-calls-cd73ft-joyal-output-1.png"
+id="umap-cell-calls-cd73ft-joyal" />
+
+## Correlation on the UMAP
+
+The same correlations, one panel per reference class. A class with a
+population in this batch lights up somewhere; a class without one has
+nowhere bright to sit.
+
+<details>
+<summary>Code</summary>
+
+``` python
+# one panel per class, straight off the obs columns the clustering step wrote. Standardizing
+# is what makes a panel about preference rather than depth, and it happens once up there rather
+# than here, so each panel scales to its own values.
+reference_classes = sorted(reference_centroids.obs_names)
+correlation_keys = [f"corr_{cell_class}" for cell_class in reference_classes]
+
+# a class listed here is clipped to the limits given instead, for when one panel's range is set
+# by a handful of cells and buries the rest:
+#   correlation_clips = {"RPE": (-1, 2), "Rod": (0, 3)}
+# passed only when something is in it, because scanpy reads the two lists positionally and has
+# no entry that means "leave this panel alone"
+correlation_clips = {}
+clip_arguments = {}
+if correlation_clips:
+    clip_arguments = {
+        "vmin": [correlation_clips.get(c, (None, None))[0] for c in reference_classes],
+        "vmax": [correlation_clips.get(c, (None, None))[1] for c in reference_classes],
+    }
+
+plt.rcParams["figure.figsize"] = (2.3, 2.0)      # per panel, so four across come to about 9
+
+axes = sc.pl.umap(
+    cd73ft_joyal,
+    color=correlation_keys,
+    title=reference_classes,                     # the prefix is for obs, not for the reader
+    ncols=4,
+    size=1,                                      # fixed, rather than scaled by cell count
+    frameon=True,
+    show=False,
+    **clip_arguments,
+)
+
+# scanpy labels the axes of every panel, and UMAP1 lands on the title of the panel below it.
+# The frame is worth keeping, the labels are not — the whole figure is one embedding
+for panel in axes:
+    panel.set_xlabel("")
+    panel.set_ylabel("")
+
+plt.show()
+```
+
+</details>
+
+<img
+src="txn1-expression-retina_files/figure-commonmark/umap-cell-correlation-cd73ft-joyal-output-1.png"
+id="umap-cell-correlation-cd73ft-joyal" />
+
 ## Correlation by cluster
 
 The per-cell correlations averaged over each cluster. Where a cluster
@@ -1637,41 +2290,112 @@ plt.close(fig)
 src="txn1-expression-retina_files/figure-commonmark/heatmap-cells-by-cluster-cd73ft-joyal-output-1.png"
 id="heatmap-cells-by-cluster-cd73ft-joyal" />
 
-## Correlation on the UMAP
+## Call composition by cluster
 
-The same correlations, one panel per reference class. A class with a
-population in this batch lights up somewhere; a class without one has
-nowhere bright to sit.
+The same per-cell calls counted up inside each cluster. Every row is a
+cluster and every column a reference class, and a square is the share of
+that cluster’s cells whose own best match was that class — so a row sums
+to one. The columns are ordered by which class each cluster leads with,
+which puts the matches on the diagonal. A boxed square is a class that
+took at least the threshold share of its cluster’s cells; a cluster with
+no boxed square did not concentrate on any one class, and its number is
+starred on the axis.
 
 <details>
 <summary>Code</summary>
 
 ``` python
-# each panel on its own scale, over the standardized correlations. Standardizing is what makes
-# a panel about preference rather than depth, and it happens once above rather than here.
-umap_coords = cd73ft_joyal.obsm["X_umap"]
+# a share of the cluster rather than a count, so a small cluster is read on the same scale as
+# a large one and a row sums to one
+composition = cell_composition.div(cell_composition.sum(axis=1), axis=0)
 
-# each panel scales to its own values. A class listed here is clipped to the limits given
-# instead, for when one panel's range is set by a handful of cells and buries the rest:
-#   correlation_clips = {"RPE": (-1, 2), "Rod": (0, 3)}
-correlation_clips = {}
+composition = composition.reindex(columns=sorted(reference_centroids.obs_names), fill_value=0.0)
 
-fig, axes = plt.subplots(3, 4, figsize=(9, 6.0), constrained_layout=True)
-for ax, reference_class in zip(axes.flat, cell_correlation.columns):
-    low, high = correlation_clips.get(reference_class, (None, None))
-    points = ax.scatter(umap_coords[:, 0], umap_coords[:, 1], s=1, linewidths=0,
-                        c=cell_correlation[reference_class].to_numpy(), cmap="viridis",
-                        vmin=low, vmax=high)
-    ax.set_title(reference_class, fontsize=9)
-    ax.set_aspect("equal", adjustable="datalim")
-    ax.set_xticks([])
-    ax.set_yticks([])
-    colorbar = fig.colorbar(points, ax=ax, shrink=0.75, pad=0.02, aspect=12)
-    colorbar.ax.tick_params(labelsize=6)
+# walk the clusters in order and take each one's largest class; a class already placed is
+# skipped, and any class no cluster leads with is appended, so the matches read as a diagonal.
+# The columns are this batch's own order, so the two preparations no longer line up column for
+# column — the labels are what to read across, not the position.
+class_order = []
+for cluster in composition.index:
+    largest = composition.loc[cluster].idxmax()
+    if largest not in class_order:
+        class_order.append(largest)
+class_order += [c for c in composition.columns if c not in class_order]
+composition = composition[class_order]
 
-for empty_ax in axes.flat[len(cell_correlation.columns):]:
-    empty_ax.axis("off")
+# the share one class has to take for the cluster to be settled on it. Nothing here reads it:
+# the box is a flag to look at, and the annotation below still calls every cluster by the
+# correlation argmax.
+purity_threshold = 0.9
 
+values = composition.to_numpy()
+settled = values.max(axis=1) >= purity_threshold      # a cluster with no boxed class is flagged
+
+# the call this figure implies: a settled cluster takes its majority class, and a flagged one
+# is named Ambiguous rather than guessed at. This is the document's cell type — every figure
+# below reads it.
+cluster_calls = {
+    cluster: (composition.loc[cluster].idxmax() if is_settled else "Ambiguous")
+    for cluster, is_settled in zip(composition.index, settled)
+}
+
+# a cluster the figures further down settled, named here by hand and keyed on its v2 number.
+# This is the one place a call is made by a person rather than by the threshold, and it is why
+# the threshold can stay strict: a large cluster that misses it is resolved by looking rather
+# than by moving the line. Empty means nothing has been resolved yet.
+resolved_clusters = {}
+cluster_calls.update(resolved_clusters)
+
+cluster_types = sorted({call for call in cluster_calls.values() if call != "Ambiguous"})
+if "Ambiguous" in cluster_calls.values():
+    cluster_types.append("Ambiguous")             # last, so it sits at the end of the legend
+
+cd73ft_joyal.obs["cell_type"] = (
+    cd73ft_joyal.obs[dendrogram_key]
+    .map(cluster_calls)
+    .astype("category")
+    .cat.reorder_categories(cluster_types)
+)
+# the reference classes keep the colours they carry on the call UMAP above; Ambiguous is grey,
+# being the absence of a call rather than a class of its own
+cell_type_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20))
+cell_type_palette["Ambiguous"] = "#cccccc"
+cd73ft_joyal.uns["cell_type_colors"] = [
+    cell_type_palette[cell_type] for cell_type in cd73ft_joyal.obs["cell_type"].cat.categories
+]
+
+fig, ax = plt.subplots(figsize=(9, 4.3), constrained_layout=True)
+image = ax.imshow(values, cmap="viridis", aspect="auto", vmin=0.0, vmax=1.0)
+ax.set_xticks(range(composition.shape[1]), composition.columns, rotation=45, ha="right",
+              fontsize=7)
+# the flagged clusters called out on the axis as well, so they read down the edge without
+# having to find the row that is missing a box. The star goes on at tick time: a tick label's
+# text is regenerated from the formatter, so setting it on the label object afterwards is lost
+cluster_labels = [
+    str(cluster) if is_settled else f"{cluster} *"
+    for cluster, is_settled in zip(composition.index, settled)
+]
+ax.set_yticks(range(composition.shape[0]), cluster_labels, fontsize=7)
+for tick, is_settled in zip(ax.get_yticklabels(), settled):
+    if not is_settled:
+        tick.set_color("#d62728")
+        tick.set_fontweight("bold")
+
+ax.set_xlabel("Reference class", fontsize=9)
+ax.set_ylabel("Cluster", fontsize=9)
+
+for row in range(values.shape[0]):
+    for column in range(values.shape[1]):
+        share = values[row, column]
+        # three decimals, so a share just under the threshold does not round to it and read as
+        # a square that should have been boxed
+        ax.text(column, row, f"{share:.3f}", ha="center", va="center", fontsize=5,
+                color="black" if share > 0.6 else "white")
+        if share >= purity_threshold:
+            ax.add_patch(Rectangle((column - 0.5, row - 0.5), 1, 1, fill=False,
+                                   edgecolor="#d62728", linewidth=1.8))
+
+fig.colorbar(image, ax=ax, shrink=0.6, pad=0.02, aspect=25, label="Share of cluster")
 plt.show()
 plt.close(fig)
 ```
@@ -1679,87 +2403,16 @@ plt.close(fig)
 </details>
 
 <img
-src="txn1-expression-retina_files/figure-commonmark/umap-cell-correlation-cd73ft-joyal-output-1.png"
-id="umap-cell-correlation-cd73ft-joyal" />
+src="txn1-expression-retina_files/figure-commonmark/heatmap-call-composition-cd73ft-joyal-output-1.png"
+id="heatmap-call-composition-cd73ft-joyal" />
 
-## Cell type calls
+## Cell type calls on the UMAP
 
-Each cluster takes the reference class it correlates with best. The
-per-cell correlations then refine that: where a real share of a
-cluster’s cells prefer some other class, those cells take it instead of
-the cluster’s call.
-
-<details>
-<summary>Code</summary>
-
-``` python
-# the call is the best-correlating reference class. The marker scores stay in the document
-# as an independent read on the same question — where the two disagree, the disagreement is
-# the thing to look at before writing an override.
-cluster_calls = mean_cell_correlation.idxmax(axis=1)
-
-# no calls made by hand yet, so every cluster below is the reference argmax
-cluster_call_overrides = {}
-cluster_calls.update(pd.Series(cluster_call_overrides))
-
-cd73ft_joyal.obs["cell_type"] = cd73ft_joyal.obs[dendrogram_key].map(cluster_calls).astype("category")
-
-# keyed on every class in the reference rather than only the ones called, so a cell type
-# keeps its colour whatever a given resolution happens to find
-cell_type_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20))
-cd73ft_joyal.uns["cell_type_colors"] = [
-    cell_type_palette[cell_type] for cell_type in cd73ft_joyal.obs["cell_type"].cat.categories
-]
-```
-
-</details>
-
-<details>
-<summary>Code</summary>
-
-``` python
-# the reference calls a whole cluster one class, so a population that never forms its own
-# cluster cannot be named from the cluster call alone. The per-cell correlations above say
-# where that happened: a class a real share of a cluster's cells correlate best with is a
-# population inside it, and those cells take that class instead of the cluster's.
-#
-# a share rather than a count, because a handful of cells favouring a class is what dropout
-# does to every cluster; and a count as well, so a small cluster cannot qualify a class on
-# three cells. RPE takes 14% of one cluster here and is excluded by the share, which is the
-# right answer for a class with no business in a neural retina prep.
-min_share = 0.25
-min_cells = 10
-
-for cluster in cell_composition.index:
-    counts = cell_composition.loc[cluster]
-    populations = counts[(counts >= min_cells) & (counts / counts.sum() >= min_share)]
-    in_cluster = (cd73ft_joyal.obs[dendrogram_key] == cluster).to_numpy()
-
-    for population in populations.index:
-        if population not in cd73ft_joyal.obs["cell_type"].cat.categories:
-            cd73ft_joyal.obs["cell_type"] = cd73ft_joyal.obs["cell_type"].cat.add_categories([population])
-        # a cell keeps the cluster's call unless its own best class is one that qualified
-        takes = in_cluster & (cd73ft_joyal.obs["cell_call"] == population).to_numpy()
-        cd73ft_joyal.obs.loc[takes, "cell_type"] = population
-
-# a class added above lands at the end of the categories, which would put it last on every
-# axis downstream rather than in with the rest
-cd73ft_joyal.obs["cell_type"] = cd73ft_joyal.obs["cell_type"].cat.remove_unused_categories()
-cd73ft_joyal.obs["cell_type"] = cd73ft_joyal.obs["cell_type"].cat.reorder_categories(
-    sorted(cd73ft_joyal.obs["cell_type"].cat.categories)
-)
-cd73ft_joyal.uns["cell_type_colors"] = [
-    cell_type_palette[cell_type] for cell_type in cd73ft_joyal.obs["cell_type"].cat.categories
-]
-```
-
-</details>
-
-## Preliminary cell types on the UMAP
-
-The same embedding once more, coloured now by the cell type each cell
-was assigned rather than by the cluster it fell in. The types are listed
-in the legend beside the panel.
+The calls the heatmap above implies, drawn on the embedding. A cluster
+whose cells concentrated on one reference class takes that class, and a
+flagged cluster is left Ambiguous in grey rather than named on a split
+vote. This is the cell type every figure below reads, so a cluster stays
+grey in all of them until it is resolved.
 
 <details>
 <summary>Code</summary>
@@ -1780,8 +2433,604 @@ plt.show()
 </details>
 
 <img
-src="txn1-expression-retina_files/figure-commonmark/umap-cell-types-cd73ft-joyal-output-1.png"
-id="umap-cell-types-cd73ft-joyal" />
+src="txn1-expression-retina_files/figure-commonmark/umap-initial-calls-cd73ft-joyal-output-1.png"
+id="umap-initial-calls-cd73ft-joyal" />
+
+## Flagged clusters on the UMAP
+
+One panel per cluster the composition left ambiguous. Each panel draws
+the whole embedding in grey and then that cluster’s own cells coloured
+by their per-cell call, on the palette the call UMAP uses. A cluster
+holding two populations puts its two colours in two places; a cluster
+whose cells simply disagree puts them on top of each other.
+
+<details>
+<summary>Code</summary>
+
+``` python
+# the clusters the composition could not settle, taken off the call column rather than
+# recomputed, so this figure and the heatmap above can never disagree about which they are
+per_cluster_call = cd73ft_joyal.obs.groupby(dendrogram_key, observed=True)["cell_type"].first()
+flagged_clusters = per_cluster_call.index[per_cluster_call == "Ambiguous"].tolist()
+
+call_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20))
+umap_coords = cd73ft_joyal.obsm["X_umap"]
+
+# drawn with scatter rather than sc.pl.umap, for the grey underlay and a fixed point size —
+# scanpy scales its points by cell count, so a panel of 43 cells would carry much larger
+# points than one of 2,000
+columns = min(len(flagged_clusters), 3)
+rows = int(np.ceil(len(flagged_clusters) / columns))
+fig, axes = plt.subplots(rows, columns, squeeze=False, figsize=(9, 3.2 * rows),
+                         constrained_layout=True)
+
+handles = {}
+for ax, cluster in zip(axes.flat, flagged_clusters):
+    in_cluster = (cd73ft_joyal.obs[dendrogram_key] == cluster).to_numpy()
+    ax.scatter(umap_coords[:, 0], umap_coords[:, 1], s=1, c="#e0e0e0", linewidths=0)
+
+    # each class drawn on its own, so the legend can carry one entry per class across panels
+    calls = cd73ft_joyal.obs["cell_type_per_cell"]
+    for cell_class in calls[in_cluster].value_counts().index:
+        selected = in_cluster & (calls == cell_class).to_numpy()
+        if not selected.any():
+            continue
+        points = ax.scatter(umap_coords[selected, 0], umap_coords[selected, 1], s=2.5,
+                            c=call_palette[cell_class], linewidths=0)
+        handles.setdefault(cell_class, points)
+
+    ax.set_title(f"Cluster {cluster}  (n={in_cluster.sum():,})", fontsize=9)
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+for ax in axes.flat[len(flagged_clusters):]:
+    ax.axis("off")
+
+fig.legend(handles.values(), handles.keys(), title="", fontsize=7, frameon=False,
+           loc="center left", bbox_to_anchor=(1.0, 0.5), markerscale=4)
+plt.show()
+plt.close(fig)
+```
+
+</details>
+
+<img
+src="txn1-expression-retina_files/figure-commonmark/umap-flagged-clusters-cd73ft-joyal-output-1.png"
+id="umap-flagged-clusters-cd73ft-joyal" />
+
+## Resolving cluster 1
+
+Everything about one flagged cluster on a single slide. On the left its
+cells sit on the embedding, coloured by their own per-cell call against
+the rest of the batch in grey. Along the bottom the QC metrics compare
+the cluster’s cells with every other cell in the batch, which is what
+separates a cluster holding two populations from one holding thin cells
+whose calls scatter.
+
+<details>
+<summary>Code</summary>
+
+``` python
+cluster_of_interest = "1"        # the v2 number, changed to look at another flagged cluster
+
+in_cluster = (cd73ft_joyal.obs[dendrogram_key] == cluster_of_interest).to_numpy()
+calls = cd73ft_joyal.obs["cell_type_per_cell"]
+call_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20))
+
+qc_df = sc.get.obs_df(cd73ft_joyal, keys=list(qc_metrics))
+qc_df["group"] = np.where(in_cluster, f"Cluster {cluster_of_interest}", "Other cells")
+group_order = [f"Cluster {cluster_of_interest}", "Other cells"]
+group_palette = dict(zip(group_order, ["#d62728", "#bfbfbf"]))
+
+# the embedding and the two contested correlations across the top, the QC metrics along the
+# bottom, so one slide carries the whole case for a cluster. Ten columns, because the five QC
+# panels each span two of them
+fig, axes = plt.subplot_mosaic(
+    [["umap"] * 5 + ["scatter"] * 5,
+     [qc_key for qc_key in qc_metrics for _ in range(2)]],
+    figsize=(9, 6.2), height_ratios=[1.5, 1], constrained_layout=True,
+)
+
+umap_coords = cd73ft_joyal.obsm["X_umap"]
+axes["umap"].scatter(umap_coords[:, 0], umap_coords[:, 1], s=1, c="#e0e0e0", linewidths=0)
+for cell_class, count in calls[in_cluster].value_counts().items():
+    if count == 0:
+        continue
+    selected = in_cluster & (calls == cell_class).to_numpy()
+    share = count / in_cluster.sum()
+    axes["umap"].scatter(umap_coords[selected, 0], umap_coords[selected, 1], s=6,
+                         c=call_palette[cell_class], linewidths=0,
+                         label=f"{cell_class}  {share:.0%}")
+
+axes["umap"].set_title(f"Cluster {cluster_of_interest}  (n={in_cluster.sum():,})", fontsize=10)
+axes["umap"].set_aspect("equal", adjustable="datalim")
+axes["umap"].set_xticks([])
+axes["umap"].set_yticks([])
+axes["umap"].legend(title="", fontsize=7, frameon=False, loc="upper left", markerscale=3)
+
+# the two classes most of the cluster's cells call, which is the choice the slide is about.
+# Every cell of the cluster placed by how well it correlates with each — two arms off the
+# diagonal is two populations, one cloud straddling it is one.
+contested = calls[in_cluster].value_counts().index[:2].tolist()
+for cell_class, count in calls[in_cluster].value_counts().items():
+    if count == 0:
+        continue
+    selected = in_cluster & (calls == cell_class).to_numpy()
+    axes["scatter"].scatter(cd73ft_joyal.obs.loc[selected, f"corr_{contested[0]}"],
+                            cd73ft_joyal.obs.loc[selected, f"corr_{contested[1]}"],
+                            s=14, c=call_palette[cell_class], linewidths=0)
+
+# the diagonal, where a cell correlates equally with both
+span = [
+    min(cd73ft_joyal.obs.loc[in_cluster, f"corr_{cell_class}"].min() for cell_class in contested),
+    max(cd73ft_joyal.obs.loc[in_cluster, f"corr_{cell_class}"].max() for cell_class in contested),
+]
+axes["scatter"].plot(span, span, color="#888888", linewidth=0.8, linestyle="--", zorder=0)
+axes["scatter"].set_title("Correlation, the two contested classes", fontsize=10)
+axes["scatter"].set_xlabel(contested[0], fontsize=8)
+axes["scatter"].set_ylabel(contested[1], fontsize=8)
+axes["scatter"].tick_params(labelsize=6)
+sns.despine(ax=axes["scatter"])
+
+for qc_key, qc_label in qc_metrics.items():
+    ax = axes[qc_key]
+    sns.violinplot(data=qc_df, x="group", y=qc_key, order=group_order, hue="group",
+                   hue_order=group_order, palette=group_palette, legend=False, cut=0,
+                   density_norm="width", inner="box", inner_kws=violin_inner_kws,
+                   linewidth=0.5, saturation=1, ax=ax)
+    ax.set_title(qc_label, fontsize=8)
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    ax.tick_params(axis="x", labelsize=6)
+    ax.tick_params(axis="y", labelsize=6)
+    ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+    ax.set_axisbelow(True)
+    sns.despine(ax=ax)
+
+plt.show()
+plt.close(fig)
+```
+
+</details>
+
+<img
+src="txn1-expression-retina_files/figure-commonmark/resolve-cluster-1-cd73ft-joyal-output-1.png"
+id="resolve-cluster-1-cd73ft-joyal" />
+
+Nothing here is a cell type. These cells run a median 9.6% hemoglobin
+against effectively none anywhere else in the batch, on 150 genes
+detected against 640 and a third of the total expression. That is red
+blood cell contamination and debris, and the reference has twelve neural
+retina classes with no erythrocyte among them, so the per-cell calls
+scatter across BC, endothelial and Muller glia without any of them
+meaning anything. The scatter panel shows no structure at all, which is
+what a cluster with no biology in it looks like.
+
+Labelled for what it is, rather than given a class it does not belong
+to.
+
+<details>
+<summary>Code</summary>
+
+``` python
+# outside the reference on purpose: naming these cells keeps them visible and keeps them out of
+# every cell type below, where they would otherwise sit inside whichever class they least
+# badly resembled
+cell_type = cd73ft_joyal.obs["cell_type"].astype(str)
+cell_type[in_cluster] = "Low quality"
+cd73ft_joyal.obs["cell_type"] = cell_type
+```
+
+</details>
+
+## Resolving cluster 7
+
+Everything about one flagged cluster on a single slide. On the left its
+cells sit on the embedding, coloured by their own per-cell call against
+the rest of the batch in grey. Along the bottom the QC metrics compare
+the cluster’s cells with every other cell in the batch, which is what
+separates a cluster holding two populations from one holding thin cells
+whose calls scatter.
+
+<details>
+<summary>Code</summary>
+
+``` python
+cluster_of_interest = "7"        # the v2 number, changed to look at another flagged cluster
+
+in_cluster = (cd73ft_joyal.obs[dendrogram_key] == cluster_of_interest).to_numpy()
+calls = cd73ft_joyal.obs["cell_type_per_cell"]
+call_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20))
+
+qc_df = sc.get.obs_df(cd73ft_joyal, keys=list(qc_metrics))
+qc_df["group"] = np.where(in_cluster, f"Cluster {cluster_of_interest}", "Other cells")
+group_order = [f"Cluster {cluster_of_interest}", "Other cells"]
+group_palette = dict(zip(group_order, ["#d62728", "#bfbfbf"]))
+
+# the embedding and the two contested correlations across the top, the QC metrics along the
+# bottom, so one slide carries the whole case for a cluster. Ten columns, because the five QC
+# panels each span two of them
+fig, axes = plt.subplot_mosaic(
+    [["umap"] * 5 + ["scatter"] * 5,
+     [qc_key for qc_key in qc_metrics for _ in range(2)]],
+    figsize=(9, 6.2), height_ratios=[1.5, 1], constrained_layout=True,
+)
+
+umap_coords = cd73ft_joyal.obsm["X_umap"]
+axes["umap"].scatter(umap_coords[:, 0], umap_coords[:, 1], s=1, c="#e0e0e0", linewidths=0)
+for cell_class, count in calls[in_cluster].value_counts().items():
+    if count == 0:
+        continue
+    selected = in_cluster & (calls == cell_class).to_numpy()
+    share = count / in_cluster.sum()
+    axes["umap"].scatter(umap_coords[selected, 0], umap_coords[selected, 1], s=6,
+                         c=call_palette[cell_class], linewidths=0,
+                         label=f"{cell_class}  {share:.0%}")
+
+axes["umap"].set_title(f"Cluster {cluster_of_interest}  (n={in_cluster.sum():,})", fontsize=10)
+axes["umap"].set_aspect("equal", adjustable="datalim")
+axes["umap"].set_xticks([])
+axes["umap"].set_yticks([])
+axes["umap"].legend(title="", fontsize=7, frameon=False, loc="upper left", markerscale=3)
+
+# the two classes most of the cluster's cells call, which is the choice the slide is about.
+# Every cell of the cluster placed by how well it correlates with each — two arms off the
+# diagonal is two populations, one cloud straddling it is one.
+contested = calls[in_cluster].value_counts().index[:2].tolist()
+for cell_class, count in calls[in_cluster].value_counts().items():
+    if count == 0:
+        continue
+    selected = in_cluster & (calls == cell_class).to_numpy()
+    axes["scatter"].scatter(cd73ft_joyal.obs.loc[selected, f"corr_{contested[0]}"],
+                            cd73ft_joyal.obs.loc[selected, f"corr_{contested[1]}"],
+                            s=14, c=call_palette[cell_class], linewidths=0)
+
+# the diagonal, where a cell correlates equally with both
+span = [
+    min(cd73ft_joyal.obs.loc[in_cluster, f"corr_{cell_class}"].min() for cell_class in contested),
+    max(cd73ft_joyal.obs.loc[in_cluster, f"corr_{cell_class}"].max() for cell_class in contested),
+]
+axes["scatter"].plot(span, span, color="#888888", linewidth=0.8, linestyle="--", zorder=0)
+axes["scatter"].set_title("Correlation, the two contested classes", fontsize=10)
+axes["scatter"].set_xlabel(contested[0], fontsize=8)
+axes["scatter"].set_ylabel(contested[1], fontsize=8)
+axes["scatter"].tick_params(labelsize=6)
+sns.despine(ax=axes["scatter"])
+
+for qc_key, qc_label in qc_metrics.items():
+    ax = axes[qc_key]
+    sns.violinplot(data=qc_df, x="group", y=qc_key, order=group_order, hue="group",
+                   hue_order=group_order, palette=group_palette, legend=False, cut=0,
+                   density_norm="width", inner="box", inner_kws=violin_inner_kws,
+                   linewidth=0.5, saturation=1, ax=ax)
+    ax.set_title(qc_label, fontsize=8)
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    ax.tick_params(axis="x", labelsize=6)
+    ax.tick_params(axis="y", labelsize=6)
+    ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+    ax.set_axisbelow(True)
+    sns.despine(ax=ax)
+
+plt.show()
+plt.close(fig)
+```
+
+</details>
+
+<img
+src="txn1-expression-retina_files/figure-commonmark/resolve-cluster-7-cd73ft-joyal-output-1.png"
+id="resolve-cluster-7-cd73ft-joyal" />
+
+Muller glia take 78% of this cluster and RPE 15%, which is the shape
+whole retina cluster 3 had — but the resemblance stops there. Those
+cells correlate with RPE at 1.64 against 1.12 for the rest of the
+cluster, a fraction of the gap cluster 3 showed, and they are just as
+high on Muller glia at 1.39. They are also more spread out across the
+embedding than the cells around them, where cluster 3’s RPE cells were
+tighter, and they are the deeper cells rather than the shallow ones.
+Elevated RPE character on Muller glia, then, rather than RPE cells:
+Muller glia phagocytose debris, and there is RPE material in this
+preparation for them to have taken up.
+
+One population.
+
+<details>
+<summary>Code</summary>
+
+``` python
+# not a mixture: the RPE-leaning cells are dispersed through the cluster rather than sitting
+# apart from it, and they carry the Muller glia signature as strongly as the RPE one
+cell_type = cd73ft_joyal.obs["cell_type"].astype(str)
+cell_type[in_cluster] = "MG"
+cd73ft_joyal.obs["cell_type"] = cell_type
+```
+
+</details>
+
+## Resolving cluster 12
+
+Everything about one flagged cluster on a single slide. On the left its
+cells sit on the embedding, coloured by their own per-cell call against
+the rest of the batch in grey. Along the bottom the QC metrics compare
+the cluster’s cells with every other cell in the batch, which is what
+separates a cluster holding two populations from one holding thin cells
+whose calls scatter.
+
+<details>
+<summary>Code</summary>
+
+``` python
+cluster_of_interest = "12"        # the v2 number, changed to look at another flagged cluster
+
+in_cluster = (cd73ft_joyal.obs[dendrogram_key] == cluster_of_interest).to_numpy()
+calls = cd73ft_joyal.obs["cell_type_per_cell"]
+call_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20))
+
+qc_df = sc.get.obs_df(cd73ft_joyal, keys=list(qc_metrics))
+qc_df["group"] = np.where(in_cluster, f"Cluster {cluster_of_interest}", "Other cells")
+group_order = [f"Cluster {cluster_of_interest}", "Other cells"]
+group_palette = dict(zip(group_order, ["#d62728", "#bfbfbf"]))
+
+# the embedding and the two contested correlations across the top, the QC metrics along the
+# bottom, so one slide carries the whole case for a cluster. Ten columns, because the five QC
+# panels each span two of them
+fig, axes = plt.subplot_mosaic(
+    [["umap"] * 5 + ["scatter"] * 5,
+     [qc_key for qc_key in qc_metrics for _ in range(2)]],
+    figsize=(9, 6.2), height_ratios=[1.5, 1], constrained_layout=True,
+)
+
+umap_coords = cd73ft_joyal.obsm["X_umap"]
+axes["umap"].scatter(umap_coords[:, 0], umap_coords[:, 1], s=1, c="#e0e0e0", linewidths=0)
+for cell_class, count in calls[in_cluster].value_counts().items():
+    if count == 0:
+        continue
+    selected = in_cluster & (calls == cell_class).to_numpy()
+    share = count / in_cluster.sum()
+    axes["umap"].scatter(umap_coords[selected, 0], umap_coords[selected, 1], s=6,
+                         c=call_palette[cell_class], linewidths=0,
+                         label=f"{cell_class}  {share:.0%}")
+
+axes["umap"].set_title(f"Cluster {cluster_of_interest}  (n={in_cluster.sum():,})", fontsize=10)
+axes["umap"].set_aspect("equal", adjustable="datalim")
+axes["umap"].set_xticks([])
+axes["umap"].set_yticks([])
+axes["umap"].legend(title="", fontsize=7, frameon=False, loc="upper left", markerscale=3)
+
+# the two classes most of the cluster's cells call, which is the choice the slide is about.
+# Every cell of the cluster placed by how well it correlates with each — two arms off the
+# diagonal is two populations, one cloud straddling it is one.
+contested = calls[in_cluster].value_counts().index[:2].tolist()
+for cell_class, count in calls[in_cluster].value_counts().items():
+    if count == 0:
+        continue
+    selected = in_cluster & (calls == cell_class).to_numpy()
+    axes["scatter"].scatter(cd73ft_joyal.obs.loc[selected, f"corr_{contested[0]}"],
+                            cd73ft_joyal.obs.loc[selected, f"corr_{contested[1]}"],
+                            s=14, c=call_palette[cell_class], linewidths=0)
+
+# the diagonal, where a cell correlates equally with both
+span = [
+    min(cd73ft_joyal.obs.loc[in_cluster, f"corr_{cell_class}"].min() for cell_class in contested),
+    max(cd73ft_joyal.obs.loc[in_cluster, f"corr_{cell_class}"].max() for cell_class in contested),
+]
+axes["scatter"].plot(span, span, color="#888888", linewidth=0.8, linestyle="--", zorder=0)
+axes["scatter"].set_title("Correlation, the two contested classes", fontsize=10)
+axes["scatter"].set_xlabel(contested[0], fontsize=8)
+axes["scatter"].set_ylabel(contested[1], fontsize=8)
+axes["scatter"].tick_params(labelsize=6)
+sns.despine(ax=axes["scatter"])
+
+for qc_key, qc_label in qc_metrics.items():
+    ax = axes[qc_key]
+    sns.violinplot(data=qc_df, x="group", y=qc_key, order=group_order, hue="group",
+                   hue_order=group_order, palette=group_palette, legend=False, cut=0,
+                   density_norm="width", inner="box", inner_kws=violin_inner_kws,
+                   linewidth=0.5, saturation=1, ax=ax)
+    ax.set_title(qc_label, fontsize=8)
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    ax.tick_params(axis="x", labelsize=6)
+    ax.tick_params(axis="y", labelsize=6)
+    ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+    ax.set_axisbelow(True)
+    sns.despine(ax=ax)
+
+plt.show()
+plt.close(fig)
+```
+
+</details>
+
+<img
+src="txn1-expression-retina_files/figure-commonmark/resolve-cluster-12-cd73ft-joyal-output-1.png"
+id="resolve-cluster-12-cd73ft-joyal" />
+
+Amacrine cells take 72% of this cluster and retinal ganglion cells 18%,
+and the two separate cleanly: the RGC cells are their own tight cloud
+well above the amacrine mass on the scatter, and their own lobe on the
+edge of the cluster on the embedding. The 6% calling BC trail off the
+other side without forming anything.
+
+A mixture, so the cells take their own calls.
+
+<details>
+<summary>Code</summary>
+
+``` python
+# the BC-called cells go with their own call too. They are a fringe rather than a population,
+# but there are fifty of them and no reason to prefer this cluster's majority to what each of
+# them says about itself
+cell_type = cd73ft_joyal.obs["cell_type"].astype(str)
+cell_type[in_cluster] = cd73ft_joyal.obs["cell_type_per_cell"].astype(str)[in_cluster]
+cd73ft_joyal.obs["cell_type"] = cell_type
+```
+
+</details>
+
+## Resolving cluster 14
+
+Everything about one flagged cluster on a single slide. On the left its
+cells sit on the embedding, coloured by their own per-cell call against
+the rest of the batch in grey. Along the bottom the QC metrics compare
+the cluster’s cells with every other cell in the batch, which is what
+separates a cluster holding two populations from one holding thin cells
+whose calls scatter.
+
+<details>
+<summary>Code</summary>
+
+``` python
+cluster_of_interest = "14"        # the v2 number, changed to look at another flagged cluster
+
+in_cluster = (cd73ft_joyal.obs[dendrogram_key] == cluster_of_interest).to_numpy()
+calls = cd73ft_joyal.obs["cell_type_per_cell"]
+call_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20))
+
+qc_df = sc.get.obs_df(cd73ft_joyal, keys=list(qc_metrics))
+qc_df["group"] = np.where(in_cluster, f"Cluster {cluster_of_interest}", "Other cells")
+group_order = [f"Cluster {cluster_of_interest}", "Other cells"]
+group_palette = dict(zip(group_order, ["#d62728", "#bfbfbf"]))
+
+# the embedding and the two contested correlations across the top, the QC metrics along the
+# bottom, so one slide carries the whole case for a cluster. Ten columns, because the five QC
+# panels each span two of them
+fig, axes = plt.subplot_mosaic(
+    [["umap"] * 5 + ["scatter"] * 5,
+     [qc_key for qc_key in qc_metrics for _ in range(2)]],
+    figsize=(9, 6.2), height_ratios=[1.5, 1], constrained_layout=True,
+)
+
+umap_coords = cd73ft_joyal.obsm["X_umap"]
+axes["umap"].scatter(umap_coords[:, 0], umap_coords[:, 1], s=1, c="#e0e0e0", linewidths=0)
+for cell_class, count in calls[in_cluster].value_counts().items():
+    if count == 0:
+        continue
+    selected = in_cluster & (calls == cell_class).to_numpy()
+    share = count / in_cluster.sum()
+    axes["umap"].scatter(umap_coords[selected, 0], umap_coords[selected, 1], s=6,
+                         c=call_palette[cell_class], linewidths=0,
+                         label=f"{cell_class}  {share:.0%}")
+
+axes["umap"].set_title(f"Cluster {cluster_of_interest}  (n={in_cluster.sum():,})", fontsize=10)
+axes["umap"].set_aspect("equal", adjustable="datalim")
+axes["umap"].set_xticks([])
+axes["umap"].set_yticks([])
+axes["umap"].legend(title="", fontsize=7, frameon=False, loc="upper left", markerscale=3)
+
+# the two classes most of the cluster's cells call, which is the choice the slide is about.
+# Every cell of the cluster placed by how well it correlates with each — two arms off the
+# diagonal is two populations, one cloud straddling it is one.
+contested = calls[in_cluster].value_counts().index[:2].tolist()
+for cell_class, count in calls[in_cluster].value_counts().items():
+    if count == 0:
+        continue
+    selected = in_cluster & (calls == cell_class).to_numpy()
+    axes["scatter"].scatter(cd73ft_joyal.obs.loc[selected, f"corr_{contested[0]}"],
+                            cd73ft_joyal.obs.loc[selected, f"corr_{contested[1]}"],
+                            s=14, c=call_palette[cell_class], linewidths=0)
+
+# the diagonal, where a cell correlates equally with both
+span = [
+    min(cd73ft_joyal.obs.loc[in_cluster, f"corr_{cell_class}"].min() for cell_class in contested),
+    max(cd73ft_joyal.obs.loc[in_cluster, f"corr_{cell_class}"].max() for cell_class in contested),
+]
+axes["scatter"].plot(span, span, color="#888888", linewidth=0.8, linestyle="--", zorder=0)
+axes["scatter"].set_title("Correlation, the two contested classes", fontsize=10)
+axes["scatter"].set_xlabel(contested[0], fontsize=8)
+axes["scatter"].set_ylabel(contested[1], fontsize=8)
+axes["scatter"].tick_params(labelsize=6)
+sns.despine(ax=axes["scatter"])
+
+for qc_key, qc_label in qc_metrics.items():
+    ax = axes[qc_key]
+    sns.violinplot(data=qc_df, x="group", y=qc_key, order=group_order, hue="group",
+                   hue_order=group_order, palette=group_palette, legend=False, cut=0,
+                   density_norm="width", inner="box", inner_kws=violin_inner_kws,
+                   linewidth=0.5, saturation=1, ax=ax)
+    ax.set_title(qc_label, fontsize=8)
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    ax.tick_params(axis="x", labelsize=6)
+    ax.tick_params(axis="y", labelsize=6)
+    ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
+    ax.set_axisbelow(True)
+    sns.despine(ax=ax)
+
+plt.show()
+plt.close(fig)
+```
+
+</details>
+
+<img
+src="txn1-expression-retina_files/figure-commonmark/resolve-cluster-14-cd73ft-joyal-output-1.png"
+id="resolve-cluster-14-cd73ft-joyal" />
+
+Rods take 84% of this cluster, which is what a rod-depleted preparation
+leaves behind, and they are one tight cloud on the scatter. The cells
+are shallow — a median 250 genes against 640 for the batch — though rods
+are small and low in complexity to begin with. The 9% calling BC are
+seven cells that sit somewhere else entirely on the embedding, up among
+the bipolar territory rather than with the rest of the cluster.
+
+One population.
+
+<details>
+<summary>Code</summary>
+
+``` python
+# the seven BC-called cells are not with this cluster on the embedding at all, so nothing here
+# argues for splitting it — they are stragglers the clustering placed badly
+cell_type = cd73ft_joyal.obs["cell_type"].astype(str)
+cell_type[in_cluster] = "Rod"
+cd73ft_joyal.obs["cell_type"] = cell_type
+```
+
+</details>
+
+## Cell types on the UMAP
+
+The cell types after the resolutions above, which is the annotation
+every figure below reads. A cluster nobody has resolved yet is still
+Ambiguous, in grey.
+
+<details>
+<summary>Code</summary>
+
+``` python
+# Ambiguous last, so it sits at the end of the legend rather than alphabetically among the
+# classes; a class that no longer has any cells drops out on its own
+cell_types = sorted(set(cd73ft_joyal.obs["cell_type"]) - {"Ambiguous"})
+if "Ambiguous" in set(cd73ft_joyal.obs["cell_type"]):
+    cell_types.append("Ambiguous")
+
+cd73ft_joyal.obs["cell_type"] = pd.Categorical(cd73ft_joyal.obs["cell_type"], categories=cell_types)
+
+cell_type_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20))
+cell_type_palette["Ambiguous"] = "#cccccc"
+cell_type_palette["Low quality"] = "#7f7f7f"   # a hand label, darker than unresolved
+cd73ft_joyal.uns["cell_type_colors"] = [cell_type_palette[cell_type] for cell_type in cell_types]
+
+plt.rcParams["figure.figsize"] = (6.5, 4.3)
+
+ax = sc.pl.umap(
+    cd73ft_joyal,
+    color="cell_type",
+    frameon=True,
+    show=False,
+)
+ax.set_aspect("equal", adjustable="datalim")
+plt.show()
+```
+
+</details>
+
+<img
+src="txn1-expression-retina_files/figure-commonmark/umap-resolved-cell-types-cd73ft-joyal-output-1.png"
+id="umap-resolved-cell-types-cd73ft-joyal" />
 
 ## Txn1 across the design
 
@@ -1858,7 +3107,16 @@ the two timepoints, drawn on a shared y axis.
 <summary>Code</summary>
 
 ``` python
-txn1_df = sc.get.obs_df(cd73ft_joyal, keys=["TXN1", "cell_type", "condition", "timepoint"])
+txn1_df = sc.get.obs_df(
+    cd73ft_joyal, keys=["TXN1", "cell_type", "condition", "timepoint"]
+)
+
+# the reference classes on the colours they carry throughout, and Ambiguous grey —
+# those cells are drawn rather than dropped, so a figure never quietly loses them
+cell_type_palette = dict(
+    zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20)
+)
+cell_type_palette["Ambiguous"] = "#cccccc"
 condition_palette = dict(zip(cd73ft_joyal.obs["condition"].cat.categories,
                              cd73ft_joyal.uns["condition_colors"]))
 
