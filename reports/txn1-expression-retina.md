@@ -1568,6 +1568,11 @@ txn1_df = sc.get.obs_df(
     wr_joyal, keys=["TXN1", "cell_type", "condition", "timepoint"]
 )
 
+# the low quality cluster is contamination and debris rather than a cell type, so it is left
+# out of the expression figures instead of standing beside the real classes as though it were
+# one. Whole retina has no such cluster, and the filter does nothing there.
+txn1_df = txn1_df[txn1_df["cell_type"] != "Low quality"]
+
 # the reference classes on the colours they carry throughout, and Ambiguous grey —
 # those cells are drawn rather than dropped, so a figure never quietly loses them
 cell_type_palette = dict(
@@ -3130,6 +3135,11 @@ the two timepoints, drawn on a shared y axis.
 txn1_df = sc.get.obs_df(
     cd73ft_joyal, keys=["TXN1", "cell_type", "condition", "timepoint"]
 )
+
+# the low quality cluster is contamination and debris rather than a cell type, so it is left
+# out of the expression figures instead of standing beside the real classes as though it were
+# one. Whole retina has no such cluster, and the filter does nothing there.
+txn1_df = txn1_df[txn1_df["cell_type"] != "Low quality"]
 
 # the reference classes on the colours they carry throughout, and Ambiguous grey —
 # those cells are drawn rather than dropped, so a figure never quietly loses them
