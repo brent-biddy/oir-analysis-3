@@ -513,6 +513,97 @@ plt.show()
 src="txn1-expression-retina_files/figure-commonmark/umap-clusters-v2-wr-joyal-output-1.png"
 id="umap-clusters-v2-wr-joyal" />
 
+## Correlation with the reference
+
+Correlating each cell against the same centroids says which clusters
+hold more than one cell type, without needing a marker panel to name the
+second one.
+
+<details>
+<summary>Code</summary>
+
+``` python
+# every shared gene here, where the cluster-level correlation above uses variable genes only.
+# A centroid is dense, so its housekeeping bulk lifts all twelve classes together and flattens
+# the differences; a single cell is 97% zero over those same variable genes and needs every
+# gene it can get. Widening to all of them moves agreement with the cluster call from 90% to 95%.
+shared_genes = [gene for gene in wr_joyal.var_names if gene in reference_centroids.var_names]
+
+ranked_cells = pd.DataFrame(np.asarray(wr_joyal[:, shared_genes].X.todense())).rank(axis=1).to_numpy()
+ranked_classes = pd.DataFrame(
+    reference_centroids[:, shared_genes].X, index=reference_centroids.obs_names
+).rank(axis=1).to_numpy()
+
+# Spearman again, written out rather than looped so all twelve classes come out of one product
+ranked_cells = ranked_cells - ranked_cells.mean(axis=1, keepdims=True)
+ranked_classes = ranked_classes - ranked_classes.mean(axis=1, keepdims=True)
+cell_correlation = pd.DataFrame(
+    (ranked_cells @ ranked_classes.T) / np.sqrt(
+        (ranked_cells ** 2).sum(axis=1)[:, None] * (ranked_classes ** 2).sum(axis=1)[None, :]
+    ),
+    index=wr_joyal.obs_names,
+    columns=reference_centroids.obs_names,
+)
+
+# standardized within each cell, once, because everything below compares cells with each
+# other. A cell's correlation to every class rises with how many genes it captured, at 0.89 to
+# 0.96 across all twelve, so the raw numbers are comparable within a cell and not between two.
+# One shallow rod cell here runs 0.056 to 0.100 across the twelve and one deep Muller cell runs
+# 0.360 to 0.459: the first cell's best match is below the second cell's worst. Subtracting each
+# cell's own mean and dividing by its own spread leaves which classes it preferred, which is the
+# comparable part. It cannot change which class is largest, so the calls are the same either way.
+cell_correlation = cell_correlation.sub(cell_correlation.mean(axis=1), axis=0).div(
+    cell_correlation.std(axis=1), axis=0
+)
+
+wr_joyal.obs["cell_call"] = pd.Categorical(
+    cell_correlation.idxmax(axis=1),
+    categories=sorted(reference_centroids.obs_names),
+)
+
+# read by the refinement below, and shown there as the purity column
+cell_composition = pd.crosstab(wr_joyal.obs[dendrogram_key], wr_joyal.obs["cell_call"])
+```
+
+</details>
+
+## Per-cell calls on the UMAP
+
+The same embedding, coloured by each cell’s own best-correlating
+reference class rather than by the cluster it fell in. Every cell
+carries a call here, made from that one cell’s correlations and
+independent of its neighbours, so a cluster showing more than one colour
+is a cluster whose cells do not all prefer the same class.
+
+<details>
+<summary>Code</summary>
+
+``` python
+# keyed on every class in the reference rather than only the ones called, so a class keeps its
+# colour here, on the cell type UMAP below, and in every violin after it
+cell_call_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20))
+wr_joyal.uns["cell_call_colors"] = [
+    cell_call_palette[cell_class] for cell_class in wr_joyal.obs["cell_call"].cat.categories
+]
+
+plt.rcParams["figure.figsize"] = (6.5, 4.3)
+
+ax = sc.pl.umap(
+    wr_joyal,
+    color="cell_call",
+    frameon=True,
+    show=False,
+)
+ax.set_aspect("equal", adjustable="datalim")
+plt.show()
+```
+
+</details>
+
+<img
+src="txn1-expression-retina_files/figure-commonmark/umap-cell-calls-wr-joyal-output-1.png"
+id="umap-cell-calls-wr-joyal" />
+
 ## QC metrics
 
 Let’s look at the QC metrics for the batch as a whole. Each panel is one
@@ -607,60 +698,6 @@ plt.close(fig)
 <img
 src="txn1-expression-retina_files/figure-commonmark/qc-violin-by-cluster-wr-joyal-output-1.png"
 id="qc-violin-by-cluster-wr-joyal" />
-
-## Correlation with the reference
-
-Correlating each cell against the same centroids says which clusters
-hold more than one cell type, without needing a marker panel to name the
-second one.
-
-<details>
-<summary>Code</summary>
-
-``` python
-# every shared gene here, where the cluster-level correlation above uses variable genes only.
-# A centroid is dense, so its housekeeping bulk lifts all twelve classes together and flattens
-# the differences; a single cell is 97% zero over those same variable genes and needs every
-# gene it can get. Widening to all of them moves agreement with the cluster call from 90% to 95%.
-shared_genes = [gene for gene in wr_joyal.var_names if gene in reference_centroids.var_names]
-
-ranked_cells = pd.DataFrame(np.asarray(wr_joyal[:, shared_genes].X.todense())).rank(axis=1).to_numpy()
-ranked_classes = pd.DataFrame(
-    reference_centroids[:, shared_genes].X, index=reference_centroids.obs_names
-).rank(axis=1).to_numpy()
-
-# Spearman again, written out rather than looped so all twelve classes come out of one product
-ranked_cells = ranked_cells - ranked_cells.mean(axis=1, keepdims=True)
-ranked_classes = ranked_classes - ranked_classes.mean(axis=1, keepdims=True)
-cell_correlation = pd.DataFrame(
-    (ranked_cells @ ranked_classes.T) / np.sqrt(
-        (ranked_cells ** 2).sum(axis=1)[:, None] * (ranked_classes ** 2).sum(axis=1)[None, :]
-    ),
-    index=wr_joyal.obs_names,
-    columns=reference_centroids.obs_names,
-)
-
-# standardized within each cell, once, because everything below compares cells with each
-# other. A cell's correlation to every class rises with how many genes it captured, at 0.89 to
-# 0.96 across all twelve, so the raw numbers are comparable within a cell and not between two.
-# One shallow rod cell here runs 0.056 to 0.100 across the twelve and one deep Muller cell runs
-# 0.360 to 0.459: the first cell's best match is below the second cell's worst. Subtracting each
-# cell's own mean and dividing by its own spread leaves which classes it preferred, which is the
-# comparable part. It cannot change which class is largest, so the calls are the same either way.
-cell_correlation = cell_correlation.sub(cell_correlation.mean(axis=1), axis=0).div(
-    cell_correlation.std(axis=1), axis=0
-)
-
-wr_joyal.obs["cell_call"] = pd.Categorical(
-    cell_correlation.idxmax(axis=1),
-    categories=sorted(reference_centroids.obs_names),
-)
-
-# read by the refinement below, and shown there as the purity column
-cell_composition = pd.crosstab(wr_joyal.obs[dendrogram_key], wr_joyal.obs["cell_call"])
-```
-
-</details>
 
 ## Correlation by cluster
 
@@ -1345,6 +1382,97 @@ plt.show()
 src="txn1-expression-retina_files/figure-commonmark/umap-clusters-v2-cd73ft-joyal-output-1.png"
 id="umap-clusters-v2-cd73ft-joyal" />
 
+## Correlation with the reference
+
+Correlating each cell against the same centroids says which clusters
+hold more than one cell type, without needing a marker panel to name the
+second one.
+
+<details>
+<summary>Code</summary>
+
+``` python
+# every shared gene here, where the cluster-level correlation above uses variable genes only.
+# A centroid is dense, so its housekeeping bulk lifts all twelve classes together and flattens
+# the differences; a single cell is 97% zero over those same variable genes and needs every
+# gene it can get. Widening to all of them moves agreement with the cluster call from 90% to 95%.
+shared_genes = [gene for gene in cd73ft_joyal.var_names if gene in reference_centroids.var_names]
+
+ranked_cells = pd.DataFrame(np.asarray(cd73ft_joyal[:, shared_genes].X.todense())).rank(axis=1).to_numpy()
+ranked_classes = pd.DataFrame(
+    reference_centroids[:, shared_genes].X, index=reference_centroids.obs_names
+).rank(axis=1).to_numpy()
+
+# Spearman again, written out rather than looped so all twelve classes come out of one product
+ranked_cells = ranked_cells - ranked_cells.mean(axis=1, keepdims=True)
+ranked_classes = ranked_classes - ranked_classes.mean(axis=1, keepdims=True)
+cell_correlation = pd.DataFrame(
+    (ranked_cells @ ranked_classes.T) / np.sqrt(
+        (ranked_cells ** 2).sum(axis=1)[:, None] * (ranked_classes ** 2).sum(axis=1)[None, :]
+    ),
+    index=cd73ft_joyal.obs_names,
+    columns=reference_centroids.obs_names,
+)
+
+# standardized within each cell, once, because everything below compares cells with each
+# other. A cell's correlation to every class rises with how many genes it captured, at 0.89 to
+# 0.96 across all twelve, so the raw numbers are comparable within a cell and not between two.
+# One shallow rod cell here runs 0.056 to 0.100 across the twelve and one deep Muller cell runs
+# 0.360 to 0.459: the first cell's best match is below the second cell's worst. Subtracting each
+# cell's own mean and dividing by its own spread leaves which classes it preferred, which is the
+# comparable part. It cannot change which class is largest, so the calls are the same either way.
+cell_correlation = cell_correlation.sub(cell_correlation.mean(axis=1), axis=0).div(
+    cell_correlation.std(axis=1), axis=0
+)
+
+cd73ft_joyal.obs["cell_call"] = pd.Categorical(
+    cell_correlation.idxmax(axis=1),
+    categories=sorted(reference_centroids.obs_names),
+)
+
+# read by the refinement below, and shown there as the purity column
+cell_composition = pd.crosstab(cd73ft_joyal.obs[dendrogram_key], cd73ft_joyal.obs["cell_call"])
+```
+
+</details>
+
+## Per-cell calls on the UMAP
+
+The same embedding, coloured by each cell’s own best-correlating
+reference class rather than by the cluster it fell in. Every cell
+carries a call here, made from that one cell’s correlations and
+independent of its neighbours, so a cluster showing more than one colour
+is a cluster whose cells do not all prefer the same class.
+
+<details>
+<summary>Code</summary>
+
+``` python
+# keyed on every class in the reference rather than only the ones called, so a class keeps its
+# colour here, on the cell type UMAP below, and in every violin after it
+cell_call_palette = dict(zip(sorted(reference_centroids.obs_names), sc.pl.palettes.default_20))
+cd73ft_joyal.uns["cell_call_colors"] = [
+    cell_call_palette[cell_class] for cell_class in cd73ft_joyal.obs["cell_call"].cat.categories
+]
+
+plt.rcParams["figure.figsize"] = (6.5, 4.3)
+
+ax = sc.pl.umap(
+    cd73ft_joyal,
+    color="cell_call",
+    frameon=True,
+    show=False,
+)
+ax.set_aspect("equal", adjustable="datalim")
+plt.show()
+```
+
+</details>
+
+<img
+src="txn1-expression-retina_files/figure-commonmark/umap-cell-calls-cd73ft-joyal-output-1.png"
+id="umap-cell-calls-cd73ft-joyal" />
+
 ## QC metrics
 
 Let’s look at the QC metrics for the batch as a whole. Each panel is one
@@ -1439,60 +1567,6 @@ plt.close(fig)
 <img
 src="txn1-expression-retina_files/figure-commonmark/qc-violin-by-cluster-cd73ft-joyal-output-1.png"
 id="qc-violin-by-cluster-cd73ft-joyal" />
-
-## Correlation with the reference
-
-Correlating each cell against the same centroids says which clusters
-hold more than one cell type, without needing a marker panel to name the
-second one.
-
-<details>
-<summary>Code</summary>
-
-``` python
-# every shared gene here, where the cluster-level correlation above uses variable genes only.
-# A centroid is dense, so its housekeeping bulk lifts all twelve classes together and flattens
-# the differences; a single cell is 97% zero over those same variable genes and needs every
-# gene it can get. Widening to all of them moves agreement with the cluster call from 90% to 95%.
-shared_genes = [gene for gene in cd73ft_joyal.var_names if gene in reference_centroids.var_names]
-
-ranked_cells = pd.DataFrame(np.asarray(cd73ft_joyal[:, shared_genes].X.todense())).rank(axis=1).to_numpy()
-ranked_classes = pd.DataFrame(
-    reference_centroids[:, shared_genes].X, index=reference_centroids.obs_names
-).rank(axis=1).to_numpy()
-
-# Spearman again, written out rather than looped so all twelve classes come out of one product
-ranked_cells = ranked_cells - ranked_cells.mean(axis=1, keepdims=True)
-ranked_classes = ranked_classes - ranked_classes.mean(axis=1, keepdims=True)
-cell_correlation = pd.DataFrame(
-    (ranked_cells @ ranked_classes.T) / np.sqrt(
-        (ranked_cells ** 2).sum(axis=1)[:, None] * (ranked_classes ** 2).sum(axis=1)[None, :]
-    ),
-    index=cd73ft_joyal.obs_names,
-    columns=reference_centroids.obs_names,
-)
-
-# standardized within each cell, once, because everything below compares cells with each
-# other. A cell's correlation to every class rises with how many genes it captured, at 0.89 to
-# 0.96 across all twelve, so the raw numbers are comparable within a cell and not between two.
-# One shallow rod cell here runs 0.056 to 0.100 across the twelve and one deep Muller cell runs
-# 0.360 to 0.459: the first cell's best match is below the second cell's worst. Subtracting each
-# cell's own mean and dividing by its own spread leaves which classes it preferred, which is the
-# comparable part. It cannot change which class is largest, so the calls are the same either way.
-cell_correlation = cell_correlation.sub(cell_correlation.mean(axis=1), axis=0).div(
-    cell_correlation.std(axis=1), axis=0
-)
-
-cd73ft_joyal.obs["cell_call"] = pd.Categorical(
-    cell_correlation.idxmax(axis=1),
-    categories=sorted(reference_centroids.obs_names),
-)
-
-# read by the refinement below, and shown there as the purity column
-cell_composition = pd.crosstab(cd73ft_joyal.obs[dendrogram_key], cd73ft_joyal.obs["cell_call"])
-```
-
-</details>
 
 ## Correlation by cluster
 
