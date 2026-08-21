@@ -340,6 +340,12 @@ delete that file first.
 
 ## Clusters on the UMAP
 
+Let’s draw the clustering scanpy just built onto the UMAP embedding.
+Each point is a cell, placed by its two UMAP coordinates and coloured by
+the cluster it was assigned, and each cluster’s number is drawn on top
+of the cells that carry it. The clusters were renumbered by size, so
+cluster 1 is the batch’s largest.
+
 <details>
 <summary>Code</summary>
 
@@ -367,6 +373,13 @@ src="txn1-expression-retina_files/figure-commonmark/umap-clusters-wr-joyal-outpu
 id="umap-clusters-wr-joyal" />
 
 ## QC metrics
+
+Let’s look at the QC metrics for the batch as a whole. Each panel is one
+metric — genes detected, total expression, and the mitochondrial,
+ribosomal and hemoglobin percentages — drawn as a violin over every cell
+in the batch, with the box inside it marking the quartiles and the
+median. The metrics were computed on the normalized matrix, so they are
+log1p sums rather than UMI fractions.
 
 <details>
 <summary>Code</summary>
@@ -406,6 +419,10 @@ src="txn1-expression-retina_files/figure-commonmark/qc-violin-wr-joyal-output-1.
 id="qc-violin-wr-joyal" />
 
 ## QC metrics by cluster
+
+The same five metrics again, one per row, with the cells split along the
+x axis by cluster. Each violin takes its colour from the cluster palette
+the UMAP above uses, so a cluster is the same colour in both figures.
 
 <details>
 <summary>Code</summary>
@@ -693,6 +710,10 @@ wr_joyal.uns["cell_type_colors"] = [
 
 ## Preliminary cell types on the UMAP
 
+The same embedding once more, coloured now by the cell type each cell
+was assigned rather than by the cluster it fell in. The types are listed
+in the legend beside the panel.
+
 <details>
 <summary>Code</summary>
 
@@ -716,6 +737,10 @@ src="txn1-expression-retina_files/figure-commonmark/umap-cell-types-wr-joyal-out
 id="umap-cell-types-wr-joyal" />
 
 ## Txn1 on the UMAP
+
+Txn1 on that same embedding. Each point is a cell, coloured by its log1p
+Txn1 value on the viridis scale, and the colourbar underneath gives the
+range those colours span.
 
 <details>
 <summary>Code</summary>
@@ -748,6 +773,10 @@ src="txn1-expression-retina_files/figure-commonmark/umap-txn1-wr-joyal-output-1.
 id="umap-txn1-wr-joyal" />
 
 ## Txn1 by cell type
+
+Txn1 by cell type, as one violin per type. The x axis is the called cell
+type, the y axis is log1p Txn1, each violin is coloured by its own cell
+type, and the box inside marks the quartiles and the median.
 
 <details>
 <summary>Code</summary>
@@ -791,6 +820,10 @@ id="txn1-violin-celltype-wr-joyal" />
 
 ## Txn1 by cell type and condition
 
+The same violins split by condition: each cell type’s slot on the x axis
+now holds one violin for NORM and one for OIR, coloured by condition
+rather than by cell type.
+
 <details>
 <summary>Code</summary>
 
@@ -824,6 +857,9 @@ id="txn1-violin-condition-wr-joyal" />
 
 ## Txn1 by cell type and timepoint
 
+The same again split by timepoint, so each cell type’s slot holds a
+violin for P14 and one for P17, coloured by timepoint.
+
 <details>
 <summary>Code</summary>
 
@@ -856,6 +892,13 @@ src="txn1-expression-retina_files/figure-commonmark/txn1-violin-timepoint-wr-joy
 id="txn1-violin-timepoint-wr-joyal" />
 
 ## Txn1 across the design
+
+Txn1 on the UMAP once per group in the design, with timepoint down the
+rows and condition across the columns. Each panel draws every cell in
+the batch in grey and then its own group’s cells in colour, on a log1p
+Txn1 scale shared by all four panels and given in the colourbar on the
+right. The number in each panel’s corner is how many cells that group
+has.
 
 <details>
 <summary>Code</summary>
@@ -915,6 +958,10 @@ id="umap-txn1-stratified-wr-joyal" />
 
 ## Txn1 by cell type across the design
 
+Txn1 by cell type across the whole design. Each cell type’s slot holds
+NORM and OIR side by side, coloured by condition, and the two rows are
+the two timepoints, drawn on a shared y axis.
+
 <details>
 <summary>Code</summary>
 
@@ -959,6 +1006,10 @@ src="txn1-expression-retina_files/figure-commonmark/txn1-violin-stratified-wr-jo
 id="txn1-violin-stratified-wr-joyal" />
 
 ## Txn1 by cell type across the design, grouped by timepoint
+
+The same data with the roles swapped: each cell type’s slot holds P14
+and P17 side by side, coloured by timepoint, and the two rows are the
+two conditions.
 
 <details>
 <summary>Code</summary>
@@ -1005,6 +1056,13 @@ id="txn1-violin-stratified-by-condition-wr-joyal" />
 # Rod-depleted Retina
 
 ## Cluster Cells
+
+First we’ll subset the query data down to the `Cd73ft_Joyal` batch, and
+analyze the batch’s cells in isolation.
+
+Then we’ll compute QC metrics, filter out rarely detected genes, keep
+the most variable genes, and embed, and cluster at the resolution chosen
+for this batch.
 
 <details>
 <summary>Code</summary>
@@ -1084,7 +1142,17 @@ cd73ft_joyal
         obsp: 'connectivities', 'distances'
         layers: None (.X)
 
+The clustered object is saved to `data/processed/`, so later renders
+read it back and skip the clustering entirely. To re-run any of it,
+delete that file first.
+
 ## Clusters on the UMAP
+
+Let’s draw the clustering scanpy just built onto the UMAP embedding.
+Each point is a cell, placed by its two UMAP coordinates and coloured by
+the cluster it was assigned, and each cluster’s number is drawn on top
+of the cells that carry it. The clusters were renumbered by size, so
+cluster 1 is the batch’s largest.
 
 <details>
 <summary>Code</summary>
@@ -1113,6 +1181,13 @@ src="txn1-expression-retina_files/figure-commonmark/umap-clusters-cd73ft-joyal-o
 id="umap-clusters-cd73ft-joyal" />
 
 ## QC metrics
+
+Let’s look at the QC metrics for the batch as a whole. Each panel is one
+metric — genes detected, total expression, and the mitochondrial,
+ribosomal and hemoglobin percentages — drawn as a violin over every cell
+in the batch, with the box inside it marking the quartiles and the
+median. The metrics were computed on the normalized matrix, so they are
+log1p sums rather than UMI fractions.
 
 <details>
 <summary>Code</summary>
@@ -1152,6 +1227,10 @@ src="txn1-expression-retina_files/figure-commonmark/qc-violin-cd73ft-joyal-outpu
 id="qc-violin-cd73ft-joyal" />
 
 ## QC metrics by cluster
+
+The same five metrics again, one per row, with the cells split along the
+x axis by cluster. Each violin takes its colour from the cluster palette
+the UMAP above uses, so a cluster is the same colour in both figures.
 
 <details>
 <summary>Code</summary>
@@ -1439,6 +1518,10 @@ cd73ft_joyal.uns["cell_type_colors"] = [
 
 ## Preliminary cell types on the UMAP
 
+The same embedding once more, coloured now by the cell type each cell
+was assigned rather than by the cluster it fell in. The types are listed
+in the legend beside the panel.
+
 <details>
 <summary>Code</summary>
 
@@ -1462,6 +1545,10 @@ src="txn1-expression-retina_files/figure-commonmark/umap-cell-types-cd73ft-joyal
 id="umap-cell-types-cd73ft-joyal" />
 
 ## Txn1 on the UMAP
+
+Txn1 on that same embedding. Each point is a cell, coloured by its log1p
+Txn1 value on the viridis scale, and the colourbar underneath gives the
+range those colours span.
 
 <details>
 <summary>Code</summary>
@@ -1494,6 +1581,10 @@ src="txn1-expression-retina_files/figure-commonmark/umap-txn1-cd73ft-joyal-outpu
 id="umap-txn1-cd73ft-joyal" />
 
 ## Txn1 by cell type
+
+Txn1 by cell type, as one violin per type. The x axis is the called cell
+type, the y axis is log1p Txn1, each violin is coloured by its own cell
+type, and the box inside marks the quartiles and the median.
 
 <details>
 <summary>Code</summary>
@@ -1537,6 +1628,10 @@ id="txn1-violin-celltype-cd73ft-joyal" />
 
 ## Txn1 by cell type and condition
 
+The same violins split by condition: each cell type’s slot on the x axis
+now holds one violin for NORM and one for OIR, coloured by condition
+rather than by cell type.
+
 <details>
 <summary>Code</summary>
 
@@ -1570,6 +1665,9 @@ id="txn1-violin-condition-cd73ft-joyal" />
 
 ## Txn1 by cell type and timepoint
 
+The same again split by timepoint, so each cell type’s slot holds a
+violin for P14 and one for P17, coloured by timepoint.
+
 <details>
 <summary>Code</summary>
 
@@ -1602,6 +1700,13 @@ src="txn1-expression-retina_files/figure-commonmark/txn1-violin-timepoint-cd73ft
 id="txn1-violin-timepoint-cd73ft-joyal" />
 
 ## Txn1 across the design
+
+Txn1 on the UMAP once per group in the design, with timepoint down the
+rows and condition across the columns. Each panel draws every cell in
+the batch in grey and then its own group’s cells in colour, on a log1p
+Txn1 scale shared by all four panels and given in the colourbar on the
+right. The number in each panel’s corner is how many cells that group
+has.
 
 <details>
 <summary>Code</summary>
@@ -1661,6 +1766,10 @@ id="umap-txn1-stratified-cd73ft-joyal" />
 
 ## Txn1 by cell type across the design
 
+Txn1 by cell type across the whole design. Each cell type’s slot holds
+NORM and OIR side by side, coloured by condition, and the two rows are
+the two timepoints, drawn on a shared y axis.
+
 <details>
 <summary>Code</summary>
 
@@ -1705,6 +1814,10 @@ src="txn1-expression-retina_files/figure-commonmark/txn1-violin-stratified-cd73f
 id="txn1-violin-stratified-cd73ft-joyal" />
 
 ## Txn1 by cell type across the design, grouped by timepoint
+
+The same data with the roles swapped: each cell type’s slot holds P14
+and P17 side by side, coloured by timepoint, and the two rows are the
+two conditions.
 
 <details>
 <summary>Code</summary>

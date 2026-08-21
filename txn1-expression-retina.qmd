@@ -299,6 +299,11 @@ clustering entirely. To re-run any of it, delete that file first.
 
 ## Clusters on the UMAP
 
+Let's draw the clustering scanpy just built onto the UMAP embedding. Each point is a cell,
+placed by its two UMAP coordinates and coloured by the cluster it was assigned, and each
+cluster's number is drawn on top of the cells that carry it. The clusters were renumbered by
+size, so cluster 1 is the batch's largest.
+
 ```{python}
 #| label: umap-clusters-wr-joyal
 # scanpy builds the figure here, and takes no figsize argument, so rcParams is where its size
@@ -318,6 +323,12 @@ plt.show()
 ```
 
 ## QC metrics
+
+Let's look at the QC metrics for the batch as a whole. Each panel is one metric — genes
+detected, total expression, and the mitochondrial, ribosomal and hemoglobin percentages — drawn
+as a violin over every cell in the batch, with the box inside it marking the quartiles and the
+median. The metrics were computed on the normalized matrix, so they are log1p sums rather than
+UMI fractions.
 
 ```{python}
 #| label: qc-violin-wr-joyal
@@ -349,6 +360,10 @@ plt.close(fig)
 ```
 
 ## QC metrics by cluster
+
+The same five metrics again, one per row, with the cells split along the x axis by cluster.
+Each violin takes its colour from the cluster palette the UMAP above uses, so a cluster is the
+same colour in both figures.
 
 ```{python}
 #| label: qc-violin-by-cluster-wr-joyal
@@ -596,6 +611,9 @@ wr_joyal.uns["cell_type_colors"] = [
 
 ## Preliminary cell types on the UMAP
 
+The same embedding once more, coloured now by the cell type each cell was assigned rather
+than by the cluster it fell in. The types are listed in the legend beside the panel.
+
 ```{python}
 #| label: umap-cell-types-wr-joyal
 plt.rcParams["figure.figsize"] = (6.5, 4.3)
@@ -611,6 +629,9 @@ plt.show()
 ```
 
 ## Txn1 on the UMAP
+
+Txn1 on that same embedding. Each point is a cell, coloured by its log1p Txn1 value on the
+viridis scale, and the colourbar underneath gives the range those colours span.
 
 ```{python}
 #| label: umap-txn1-wr-joyal
@@ -635,6 +656,10 @@ plt.close(fig)
 ```
 
 ## Txn1 by cell type
+
+Txn1 by cell type, as one violin per type. The x axis is the called cell type, the y axis is
+log1p Txn1, each violin is coloured by its own cell type, and the box inside marks the
+quartiles and the median.
 
 ```{python}
 #| label: txn1-violin-celltype-wr-joyal
@@ -670,6 +695,9 @@ plt.close(fig)
 
 ## Txn1 by cell type and condition
 
+The same violins split by condition: each cell type's slot on the x axis now holds one violin
+for NORM and one for OIR, coloured by condition rather than by cell type.
+
 ```{python}
 #| label: txn1-violin-condition-wr-joyal
 condition_palette = dict(zip(wr_joyal.obs["condition"].cat.categories,
@@ -695,6 +723,9 @@ plt.close(fig)
 
 ## Txn1 by cell type and timepoint
 
+The same again split by timepoint, so each cell type's slot holds a violin for P14 and one
+for P17, coloured by timepoint.
+
 ```{python}
 #| label: txn1-violin-timepoint-wr-joyal
 timepoint_palette = dict(zip(wr_joyal.obs["timepoint"].cat.categories,
@@ -719,6 +750,11 @@ plt.close(fig)
 ```
 
 ## Txn1 across the design
+
+Txn1 on the UMAP once per group in the design, with timepoint down the rows and condition
+across the columns. Each panel draws every cell in the batch in grey and then its own group's
+cells in colour, on a log1p Txn1 scale shared by all four panels and given in the colourbar on
+the right. The number in each panel's corner is how many cells that group has.
 
 ```{python}
 #| label: umap-txn1-stratified-wr-joyal
@@ -770,6 +806,10 @@ plt.close(fig)
 
 ## Txn1 by cell type across the design
 
+Txn1 by cell type across the whole design. Each cell type's slot holds NORM and OIR side by
+side, coloured by condition, and the two rows are the two timepoints, drawn on a shared y
+axis.
+
 ```{python}
 #| label: txn1-violin-stratified-wr-joyal
 cell_type_order = list(wr_joyal.obs["cell_type"].cat.categories)
@@ -806,6 +846,9 @@ plt.close(fig)
 ```
 
 ## Txn1 by cell type across the design, grouped by timepoint
+
+The same data with the roles swapped: each cell type's slot holds P14 and P17 side by side,
+coloured by timepoint, and the two rows are the two conditions.
 
 ```{python}
 #| label: txn1-violin-stratified-by-condition-wr-joyal
@@ -844,6 +887,12 @@ plt.close(fig)
 # Rod-depleted Retina
 
 ## Cluster Cells
+
+First we'll subset the query data down to the `Cd73ft_Joyal` batch, and analyze the batch's
+cells in isolation.
+
+Then we'll compute QC metrics, filter out rarely detected genes, keep the most variable genes,
+and embed, and cluster at the resolution chosen for this batch.
 
 ```{python}
 #| label: cluster-cd73ft-joyal
@@ -910,8 +959,16 @@ else:
 cd73ft_joyal
 ```
 
+The clustered object is saved to `data/processed/`, so later renders read it back and skip the
+clustering entirely. To re-run any of it, delete that file first.
+
 
 ## Clusters on the UMAP
+
+Let's draw the clustering scanpy just built onto the UMAP embedding. Each point is a cell,
+placed by its two UMAP coordinates and coloured by the cluster it was assigned, and each
+cluster's number is drawn on top of the cells that carry it. The clusters were renumbered by
+size, so cluster 1 is the batch's largest.
 
 ```{python}
 #| label: umap-clusters-cd73ft-joyal
@@ -932,6 +989,12 @@ plt.show()
 ```
 
 ## QC metrics
+
+Let's look at the QC metrics for the batch as a whole. Each panel is one metric — genes
+detected, total expression, and the mitochondrial, ribosomal and hemoglobin percentages — drawn
+as a violin over every cell in the batch, with the box inside it marking the quartiles and the
+median. The metrics were computed on the normalized matrix, so they are log1p sums rather than
+UMI fractions.
 
 ```{python}
 #| label: qc-violin-cd73ft-joyal
@@ -963,6 +1026,10 @@ plt.close(fig)
 ```
 
 ## QC metrics by cluster
+
+The same five metrics again, one per row, with the cells split along the x axis by cluster.
+Each violin takes its colour from the cluster palette the UMAP above uses, so a cluster is the
+same colour in both figures.
 
 ```{python}
 #| label: qc-violin-by-cluster-cd73ft-joyal
@@ -1210,6 +1277,9 @@ cd73ft_joyal.uns["cell_type_colors"] = [
 
 ## Preliminary cell types on the UMAP
 
+The same embedding once more, coloured now by the cell type each cell was assigned rather
+than by the cluster it fell in. The types are listed in the legend beside the panel.
+
 ```{python}
 #| label: umap-cell-types-cd73ft-joyal
 plt.rcParams["figure.figsize"] = (6.5, 4.3)
@@ -1225,6 +1295,9 @@ plt.show()
 ```
 
 ## Txn1 on the UMAP
+
+Txn1 on that same embedding. Each point is a cell, coloured by its log1p Txn1 value on the
+viridis scale, and the colourbar underneath gives the range those colours span.
 
 ```{python}
 #| label: umap-txn1-cd73ft-joyal
@@ -1249,6 +1322,10 @@ plt.close(fig)
 ```
 
 ## Txn1 by cell type
+
+Txn1 by cell type, as one violin per type. The x axis is the called cell type, the y axis is
+log1p Txn1, each violin is coloured by its own cell type, and the box inside marks the
+quartiles and the median.
 
 ```{python}
 #| label: txn1-violin-celltype-cd73ft-joyal
@@ -1284,6 +1361,9 @@ plt.close(fig)
 
 ## Txn1 by cell type and condition
 
+The same violins split by condition: each cell type's slot on the x axis now holds one violin
+for NORM and one for OIR, coloured by condition rather than by cell type.
+
 ```{python}
 #| label: txn1-violin-condition-cd73ft-joyal
 condition_palette = dict(zip(cd73ft_joyal.obs["condition"].cat.categories,
@@ -1309,6 +1389,9 @@ plt.close(fig)
 
 ## Txn1 by cell type and timepoint
 
+The same again split by timepoint, so each cell type's slot holds a violin for P14 and one
+for P17, coloured by timepoint.
+
 ```{python}
 #| label: txn1-violin-timepoint-cd73ft-joyal
 timepoint_palette = dict(zip(cd73ft_joyal.obs["timepoint"].cat.categories,
@@ -1333,6 +1416,11 @@ plt.close(fig)
 ```
 
 ## Txn1 across the design
+
+Txn1 on the UMAP once per group in the design, with timepoint down the rows and condition
+across the columns. Each panel draws every cell in the batch in grey and then its own group's
+cells in colour, on a log1p Txn1 scale shared by all four panels and given in the colourbar on
+the right. The number in each panel's corner is how many cells that group has.
 
 ```{python}
 #| label: umap-txn1-stratified-cd73ft-joyal
@@ -1384,6 +1472,10 @@ plt.close(fig)
 
 ## Txn1 by cell type across the design
 
+Txn1 by cell type across the whole design. Each cell type's slot holds NORM and OIR side by
+side, coloured by condition, and the two rows are the two timepoints, drawn on a shared y
+axis.
+
 ```{python}
 #| label: txn1-violin-stratified-cd73ft-joyal
 cell_type_order = list(cd73ft_joyal.obs["cell_type"].cat.categories)
@@ -1420,6 +1512,9 @@ plt.close(fig)
 ```
 
 ## Txn1 by cell type across the design, grouped by timepoint
+
+The same data with the roles swapped: each cell type's slot holds P14 and P17 side by side,
+coloured by timepoint, and the two rows are the two conditions.
 
 ```{python}
 #| label: txn1-violin-stratified-by-condition-cd73ft-joyal
