@@ -28,7 +28,9 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 import seaborn as sns
+from scipy.cluster.hierarchy import leaves_list, linkage   # used to order the cluster heatmap
 from scipy.sparse import csr_matrix         # used to store the counts sparsely
+from scipy.spatial.distance import squareform              # used to feed linkage its distances
 
 plt.rcParams.update({
     "figure.dpi": 200,        # resolution of the figures as drawn
@@ -371,6 +373,144 @@ plt.show()
 src="txn1-expression-retina_files/figure-commonmark/umap-clusters-wr-joyal-output-1.png"
 id="umap-clusters-wr-joyal" />
 
+## Cluster similarity
+
+Each cluster’s expression profile correlated against every other
+cluster’s. A profile is the mean normalized expression of the cells in
+the cluster, and the correlation is Spearman over this preparation’s
+most variable genes.
+
+The same matrix is drawn twice, both panels ordered down the dendrogram
+it defines. On the left the clusters carry their size-rank numbers,
+which that ordering leaves out of sequence; on the right the same
+clusters are renumbered 1 to k along the order they now sit in. A
+position means the same cluster in both panels, so reading one against
+the other gives the mapping.
+
+<details>
+<summary>Code</summary>
+
+``` python
+# the variable genes rather than all of them: these are the axes the batch was clustered on,
+# where the correlation below needs every gene it can get because a single cell is mostly
+# zero. A centroid is dense, so the housekeeping bulk of the full gene set would lift every
+# pair together and flatten the contrast this figure is made of.
+variable_genes = wr_joyal.var_names[wr_joyal.var["highly_variable"]]
+cluster_centroids = pd.DataFrame(
+    np.asarray(wr_joyal[:, variable_genes].X.todense()),
+    index=wr_joyal.obs[ranked_key],
+    columns=variable_genes,
+).groupby(level=0, observed=True).mean()
+
+# Spearman, written out the same way as the reference correlation below
+ranked_centroids = cluster_centroids.rank(axis=1).to_numpy()
+ranked_centroids = ranked_centroids - ranked_centroids.mean(axis=1, keepdims=True)
+centroid_norms = np.sqrt((ranked_centroids ** 2).sum(axis=1))
+self_correlation = pd.DataFrame(
+    (ranked_centroids @ ranked_centroids.T) / (centroid_norms[:, None] * centroid_norms[None, :]),
+    index=cluster_centroids.index,
+    columns=cluster_centroids.index,
+)
+
+# squareform first, and this is the easy part to lose: linkage picks its input by shape, so a
+# square matrix handed over directly is read as observations x features rather than as
+# distances — no error, and a different question answered. 1 - r is the correlation distance.
+# checks=False because floating point can leave the diagonal a hair off zero.
+leaf_order = leaves_list(linkage(squareform(1.0 - self_correlation.to_numpy(), checks=False),
+                                 method="average", optimal_ordering=True))
+
+# the new numbering: position down the dendrogram, so 1 is the leftmost leaf and neighbouring
+# numbers are transcriptionally adjacent. Size rank says only how many cells a cluster holds,
+# which orders the axes of every figure downstream by nothing in particular.
+dendrogram_key = f"leiden_res_{wr_joyal_resolution:.2f}_v2"
+dendrogram_labels = [str(position) for position in range(1, len(leaf_order) + 1)]
+dendrogram_calls = dict(zip(self_correlation.index[leaf_order], dendrogram_labels))
+
+wr_joyal.obs[dendrogram_key] = (
+    wr_joyal.obs[ranked_key]
+    .map(dendrogram_calls)
+    .astype("category")
+    .cat.reorder_categories(dendrogram_labels)
+)
+wr_joyal.uns[f"{dendrogram_key}_colors"] = [        # tab20 again, cycled once past 20 clusters
+    mcolors.to_hex(plt.cm.tab20.colors[(int(label) - 1) % 20]) for label in dendrogram_labels
+]
+
+# both panels are the same matrix in the same dendrogram order — only the labels differ, which
+# is the point: the left says which size rank each leaf is, the right renumbers those leaves
+# 1 to k, and reading a position across the two panels gives the mapping between them.
+ordered_correlation = self_correlation.iloc[leaf_order, leaf_order]
+correlation_panels = {
+    "Size rank (v1)": (ordered_correlation, list(self_correlation.index[leaf_order])),
+    "Dendrogram order (v2)": (ordered_correlation, dendrogram_labels),
+}
+
+# vmin at the matrix minimum rather than 0, because the values sit in a narrow band well above
+# zero that a fixed floor would flatten.
+values = self_correlation.to_numpy()
+low, high = values.min(), values.max()
+
+fig, axes = plt.subplots(1, len(correlation_panels), squeeze=False, figsize=(9, 4.3),
+                         constrained_layout=True)
+for ax, (title, (matrix, labels)) in zip(axes.flat, correlation_panels.items()):
+    panel = matrix.to_numpy()
+    image = ax.imshow(panel, cmap="viridis", aspect="auto", vmin=low, vmax=high)
+    ax.set_title(title, fontsize=9)
+    ax.set_xticks(range(len(labels)), labels, rotation=45, ha="right", fontsize=6)
+    ax.set_yticks(range(len(labels)), labels, fontsize=6)
+    ax.set_xlabel("Cluster", fontsize=8)
+    ax.set_ylabel("Cluster", fontsize=8)
+
+    # annotated only while the grid is coarse enough for the numbers to be legible
+    if panel.size <= 240:
+        threshold = low + (high - low) * 0.6
+        for row in range(panel.shape[0]):
+            for column in range(panel.shape[1]):
+                ax.text(column, row, f"{panel[row, column]:.2f}", ha="center", va="center",
+                        fontsize=5, color="black" if panel[row, column] > threshold else "white")
+
+fig.colorbar(image, ax=axes, shrink=0.6, pad=0.02, aspect=25, label="Spearman r")
+plt.show()
+plt.close(fig)
+```
+
+</details>
+
+<img
+src="txn1-expression-retina_files/figure-commonmark/heatmap-cluster-self-correlation-wr-joyal-output-1.png"
+id="heatmap-cluster-self-correlation-wr-joyal" />
+
+## Renumbered clusters on the UMAP
+
+The same embedding as before, coloured and labelled by the dendrogram
+numbering rather than by size rank. Each point is a cell, and each
+cluster’s v2 number is drawn on top of the cells that carry it. This is
+the numbering every figure below uses.
+
+<details>
+<summary>Code</summary>
+
+``` python
+plt.rcParams["figure.figsize"] = (5.0, 4.3)
+
+ax = sc.pl.umap(
+    wr_joyal,
+    color=dendrogram_key,
+    legend_loc="on data",
+    legend_fontoutline=2,
+    frameon=True,
+    show=False,
+)
+ax.set_aspect("equal", adjustable="datalim")
+plt.show()
+```
+
+</details>
+
+<img
+src="txn1-expression-retina_files/figure-commonmark/umap-clusters-v2-wr-joyal-output-1.png"
+id="umap-clusters-v2-wr-joyal" />
+
 ## QC metrics
 
 Let’s look at the QC metrics for the batch as a whole. Each panel is one
@@ -394,7 +534,7 @@ qc_metrics = {
 violin_inner_kws = {"box_width": 2, "whis_width": 1, "marker": "o",
                     "markersize": 3.0, "markeredgecolor": "white"}
 
-qc_df = sc.get.obs_df(wr_joyal, keys=[ranked_key] + list(qc_metrics))
+qc_df = sc.get.obs_df(wr_joyal, keys=[dendrogram_key] + list(qc_metrics))
 batch_color = wr_joyal.uns["batch_colors"][0]
 
 fig, axes = plt.subplots(1, len(qc_metrics), squeeze=False, figsize=(9, 3.0),
@@ -429,21 +569,21 @@ the UMAP above uses, so a cluster is the same colour in both figures.
 ``` python
 # only scanpy reads the _colors entry out of uns, so the palette is handed to seaborn
 # explicitly — otherwise a cluster changes color between the UMAP and these violins
-cluster_palette = dict(zip(wr_joyal.obs[ranked_key].cat.categories, wr_joyal.uns[f"{ranked_key}_colors"]))
+cluster_palette = dict(zip(wr_joyal.obs[dendrogram_key].cat.categories, wr_joyal.uns[f"{dendrogram_key}_colors"]))
 
 fig, axes = plt.subplots(len(qc_metrics), 1, squeeze=False, sharex=True, figsize=(9, 4.3),
                          constrained_layout=True)
 for ax, (qc_key, qc_label) in zip(axes.flat, qc_metrics.items()):
     # dodge=False because hue repeats x: left on, seaborn gives each of the 21 clusters its
     # own sub-slot and every violin is drawn a twentieth of its slot wide, off its tick
-    sns.violinplot(data=qc_df, x=ranked_key, y=qc_key, hue=ranked_key, palette=cluster_palette,
+    sns.violinplot(data=qc_df, x=dendrogram_key, y=qc_key, hue=dendrogram_key, palette=cluster_palette,
                    legend=False, dodge=False, cut=0, density_norm="width", inner="box",
                    inner_kws=violin_inner_kws, linewidth=0.5, saturation=1, ax=ax)
 
     # seaborn colours the bodies in an order that does not follow the x positions when hue
     # repeats x, so each is recoloured from the cluster it actually sits under. The order
     # comes off the categorical rather than the tick labels, which are empty on a shared axis.
-    cluster_order = list(wr_joyal.obs[ranked_key].cat.categories)
+    cluster_order = list(wr_joyal.obs[dendrogram_key].cat.categories)
     for body in ax.collections:
         extents = body.get_paths()[0].get_extents()
         body.set_facecolor(cluster_palette[cluster_order[round((extents.x0 + extents.x1) / 2)]])
@@ -515,7 +655,7 @@ wr_joyal.obs["cell_call"] = pd.Categorical(
 )
 
 # read by the refinement below, and shown there as the purity column
-cell_composition = pd.crosstab(wr_joyal.obs[ranked_key], wr_joyal.obs["cell_call"])
+cell_composition = pd.crosstab(wr_joyal.obs[dendrogram_key], wr_joyal.obs["cell_call"])
 ```
 
 </details>
@@ -538,7 +678,7 @@ row.
 # only the row scaling is a call. A column's brightest cell is the best home for that class
 # whether or not the class is present at all: RPE peaks somewhere in every batch, which says
 # where it would land rather than that it was found.
-mean_cell_correlation = cell_correlation.groupby(wr_joyal.obs[ranked_key], observed=True).mean()
+mean_cell_correlation = cell_correlation.groupby(wr_joyal.obs[dendrogram_key], observed=True).mean()
 
 cluster_range = mean_cell_correlation.max(axis=1) - mean_cell_correlation.min(axis=1)
 cells_scaled_by_cluster = mean_cell_correlation.sub(
@@ -654,7 +794,7 @@ cluster_calls = mean_cell_correlation.idxmax(axis=1)
 cluster_call_overrides = {}
 cluster_calls.update(pd.Series(cluster_call_overrides))
 
-wr_joyal.obs["cell_type"] = wr_joyal.obs[ranked_key].map(cluster_calls).astype("category")
+wr_joyal.obs["cell_type"] = wr_joyal.obs[dendrogram_key].map(cluster_calls).astype("category")
 
 # keyed on every class in the reference rather than only the ones called, so a cell type
 # keeps its colour whatever a given resolution happens to find
@@ -685,7 +825,7 @@ min_cells = 10
 for cluster in cell_composition.index:
     counts = cell_composition.loc[cluster]
     populations = counts[(counts >= min_cells) & (counts / counts.sum() >= min_share)]
-    in_cluster = (wr_joyal.obs[ranked_key] == cluster).to_numpy()
+    in_cluster = (wr_joyal.obs[dendrogram_key] == cluster).to_numpy()
 
     for population in populations.index:
         if population not in wr_joyal.obs["cell_type"].cat.categories:
@@ -783,8 +923,17 @@ type, and the box inside marks the quartiles and the median.
 ``` python
 txn1_df = sc.get.obs_df(wr_joyal, keys=["TXN1", "cell_type", "condition", "timepoint"])
 
+# cell types ordered by their mean Txn1, highest first
+cell_type_order = (
+    txn1_df.groupby("cell_type", observed=True)["TXN1"]
+    .mean()
+    .sort_values(ascending=False)
+    .index.tolist()
+)
+
 fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
-sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", hue="cell_type",
+sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", order=cell_type_order,
+               hue="cell_type", hue_order=cell_type_order,
                palette=cell_type_palette, legend=True, dodge=False, cut=0,
                density_norm="width", inner="box", inner_kws=violin_inner_kws,
                linewidth=0.5, saturation=1, ax=ax)
@@ -792,7 +941,6 @@ sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", hue="cell_type",
 # with hue repeating x and dodge off, seaborn hands the bodies their colours in an order
 # that does not follow the x positions — the legend ends up right and the violins wrong.
 # Recolour each body from the cell type it actually sits under.
-cell_type_order = list(wr_joyal.obs["cell_type"].cat.categories)
 for body in ax.collections:
     extents = body.get_paths()[0].get_extents()
     body.set_facecolor(cell_type_palette[cell_type_order[round((extents.x0 + extents.x1) / 2)]])
@@ -827,12 +975,21 @@ rather than by cell type.
 <summary>Code</summary>
 
 ``` python
+# cell types ordered by their mean Txn1, highest first
+cell_type_order = (
+    txn1_df.groupby("cell_type", observed=True)["TXN1"]
+    .mean()
+    .sort_values(ascending=False)
+    .index.tolist()
+)
+
 condition_palette = dict(zip(wr_joyal.obs["condition"].cat.categories,
                              wr_joyal.uns["condition_colors"]))
 
 fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
-sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", hue="condition",
-               palette=condition_palette, cut=0, density_norm="width", inner="box",
+sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", order=cell_type_order,
+               hue="condition", palette=condition_palette, cut=0, density_norm="width",
+               inner="box",
                inner_kws=violin_inner_kws, linewidth=0.5, ax=ax)
 ax.set_xlabel("")
 ax.set_ylabel("Txn1 (log1p)", fontsize=9)
@@ -863,12 +1020,21 @@ violin for P14 and one for P17, coloured by timepoint.
 <summary>Code</summary>
 
 ``` python
+# cell types ordered by their mean Txn1, highest first
+cell_type_order = (
+    txn1_df.groupby("cell_type", observed=True)["TXN1"]
+    .mean()
+    .sort_values(ascending=False)
+    .index.tolist()
+)
+
 timepoint_palette = dict(zip(wr_joyal.obs["timepoint"].cat.categories,
                              wr_joyal.uns["timepoint_colors"]))
 
 fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
-sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", hue="timepoint",
-               palette=timepoint_palette, cut=0, density_norm="width", inner="box",
+sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", order=cell_type_order,
+               hue="timepoint", palette=timepoint_palette, cut=0, density_norm="width",
+               inner="box",
                inner_kws=violin_inner_kws, linewidth=0.5, ax=ax)
 ax.set_xlabel("")
 ax.set_ylabel("Txn1 (log1p)", fontsize=9)
@@ -965,7 +1131,14 @@ the two timepoints, drawn on a shared y axis.
 <summary>Code</summary>
 
 ``` python
-cell_type_order = list(wr_joyal.obs["cell_type"].cat.categories)
+# cell types ordered by their mean Txn1, highest first
+cell_type_order = (
+    txn1_df.groupby("cell_type", observed=True)["TXN1"]
+    .mean()
+    .sort_values(ascending=False)
+    .index.tolist()
+)
+
 condition_order = list(wr_joyal.obs["condition"].cat.categories)
 timepoints = list(wr_joyal.obs["timepoint"].cat.categories)
 
@@ -1014,6 +1187,14 @@ two conditions.
 <summary>Code</summary>
 
 ``` python
+# cell types ordered by their mean Txn1, highest first
+cell_type_order = (
+    txn1_df.groupby("cell_type", observed=True)["TXN1"]
+    .mean()
+    .sort_values(ascending=False)
+    .index.tolist()
+)
+
 timepoint_palette = dict(zip(wr_joyal.obs["timepoint"].cat.categories,
                              wr_joyal.uns["timepoint_colors"]))
 
@@ -1179,6 +1360,144 @@ plt.show()
 src="txn1-expression-retina_files/figure-commonmark/umap-clusters-cd73ft-joyal-output-1.png"
 id="umap-clusters-cd73ft-joyal" />
 
+## Cluster similarity
+
+Each cluster’s expression profile correlated against every other
+cluster’s. A profile is the mean normalized expression of the cells in
+the cluster, and the correlation is Spearman over this preparation’s
+most variable genes.
+
+The same matrix is drawn twice, both panels ordered down the dendrogram
+it defines. On the left the clusters carry their size-rank numbers,
+which that ordering leaves out of sequence; on the right the same
+clusters are renumbered 1 to k along the order they now sit in. A
+position means the same cluster in both panels, so reading one against
+the other gives the mapping.
+
+<details>
+<summary>Code</summary>
+
+``` python
+# the variable genes rather than all of them: these are the axes the batch was clustered on,
+# where the correlation below needs every gene it can get because a single cell is mostly
+# zero. A centroid is dense, so the housekeeping bulk of the full gene set would lift every
+# pair together and flatten the contrast this figure is made of.
+variable_genes = cd73ft_joyal.var_names[cd73ft_joyal.var["highly_variable"]]
+cluster_centroids = pd.DataFrame(
+    np.asarray(cd73ft_joyal[:, variable_genes].X.todense()),
+    index=cd73ft_joyal.obs[ranked_key],
+    columns=variable_genes,
+).groupby(level=0, observed=True).mean()
+
+# Spearman, written out the same way as the reference correlation below
+ranked_centroids = cluster_centroids.rank(axis=1).to_numpy()
+ranked_centroids = ranked_centroids - ranked_centroids.mean(axis=1, keepdims=True)
+centroid_norms = np.sqrt((ranked_centroids ** 2).sum(axis=1))
+self_correlation = pd.DataFrame(
+    (ranked_centroids @ ranked_centroids.T) / (centroid_norms[:, None] * centroid_norms[None, :]),
+    index=cluster_centroids.index,
+    columns=cluster_centroids.index,
+)
+
+# squareform first, and this is the easy part to lose: linkage picks its input by shape, so a
+# square matrix handed over directly is read as observations x features rather than as
+# distances — no error, and a different question answered. 1 - r is the correlation distance.
+# checks=False because floating point can leave the diagonal a hair off zero.
+leaf_order = leaves_list(linkage(squareform(1.0 - self_correlation.to_numpy(), checks=False),
+                                 method="average", optimal_ordering=True))
+
+# the new numbering: position down the dendrogram, so 1 is the leftmost leaf and neighbouring
+# numbers are transcriptionally adjacent. Size rank says only how many cells a cluster holds,
+# which orders the axes of every figure downstream by nothing in particular.
+dendrogram_key = f"leiden_res_{cd73ft_joyal_resolution:.2f}_v2"
+dendrogram_labels = [str(position) for position in range(1, len(leaf_order) + 1)]
+dendrogram_calls = dict(zip(self_correlation.index[leaf_order], dendrogram_labels))
+
+cd73ft_joyal.obs[dendrogram_key] = (
+    cd73ft_joyal.obs[ranked_key]
+    .map(dendrogram_calls)
+    .astype("category")
+    .cat.reorder_categories(dendrogram_labels)
+)
+cd73ft_joyal.uns[f"{dendrogram_key}_colors"] = [        # tab20 again, cycled once past 20 clusters
+    mcolors.to_hex(plt.cm.tab20.colors[(int(label) - 1) % 20]) for label in dendrogram_labels
+]
+
+# both panels are the same matrix in the same dendrogram order — only the labels differ, which
+# is the point: the left says which size rank each leaf is, the right renumbers those leaves
+# 1 to k, and reading a position across the two panels gives the mapping between them.
+ordered_correlation = self_correlation.iloc[leaf_order, leaf_order]
+correlation_panels = {
+    "Size rank (v1)": (ordered_correlation, list(self_correlation.index[leaf_order])),
+    "Dendrogram order (v2)": (ordered_correlation, dendrogram_labels),
+}
+
+# vmin at the matrix minimum rather than 0, because the values sit in a narrow band well above
+# zero that a fixed floor would flatten.
+values = self_correlation.to_numpy()
+low, high = values.min(), values.max()
+
+fig, axes = plt.subplots(1, len(correlation_panels), squeeze=False, figsize=(9, 4.3),
+                         constrained_layout=True)
+for ax, (title, (matrix, labels)) in zip(axes.flat, correlation_panels.items()):
+    panel = matrix.to_numpy()
+    image = ax.imshow(panel, cmap="viridis", aspect="auto", vmin=low, vmax=high)
+    ax.set_title(title, fontsize=9)
+    ax.set_xticks(range(len(labels)), labels, rotation=45, ha="right", fontsize=6)
+    ax.set_yticks(range(len(labels)), labels, fontsize=6)
+    ax.set_xlabel("Cluster", fontsize=8)
+    ax.set_ylabel("Cluster", fontsize=8)
+
+    # annotated only while the grid is coarse enough for the numbers to be legible
+    if panel.size <= 240:
+        threshold = low + (high - low) * 0.6
+        for row in range(panel.shape[0]):
+            for column in range(panel.shape[1]):
+                ax.text(column, row, f"{panel[row, column]:.2f}", ha="center", va="center",
+                        fontsize=5, color="black" if panel[row, column] > threshold else "white")
+
+fig.colorbar(image, ax=axes, shrink=0.6, pad=0.02, aspect=25, label="Spearman r")
+plt.show()
+plt.close(fig)
+```
+
+</details>
+
+<img
+src="txn1-expression-retina_files/figure-commonmark/heatmap-cluster-self-correlation-cd73ft-joyal-output-1.png"
+id="heatmap-cluster-self-correlation-cd73ft-joyal" />
+
+## Renumbered clusters on the UMAP
+
+The same embedding as before, coloured and labelled by the dendrogram
+numbering rather than by size rank. Each point is a cell, and each
+cluster’s v2 number is drawn on top of the cells that carry it. This is
+the numbering every figure below uses.
+
+<details>
+<summary>Code</summary>
+
+``` python
+plt.rcParams["figure.figsize"] = (5.0, 4.3)
+
+ax = sc.pl.umap(
+    cd73ft_joyal,
+    color=dendrogram_key,
+    legend_loc="on data",
+    legend_fontoutline=2,
+    frameon=True,
+    show=False,
+)
+ax.set_aspect("equal", adjustable="datalim")
+plt.show()
+```
+
+</details>
+
+<img
+src="txn1-expression-retina_files/figure-commonmark/umap-clusters-v2-cd73ft-joyal-output-1.png"
+id="umap-clusters-v2-cd73ft-joyal" />
+
 ## QC metrics
 
 Let’s look at the QC metrics for the batch as a whole. Each panel is one
@@ -1202,7 +1521,7 @@ qc_metrics = {
 violin_inner_kws = {"box_width": 2, "whis_width": 1, "marker": "o",
                     "markersize": 3.0, "markeredgecolor": "white"}
 
-qc_df = sc.get.obs_df(cd73ft_joyal, keys=[ranked_key] + list(qc_metrics))
+qc_df = sc.get.obs_df(cd73ft_joyal, keys=[dendrogram_key] + list(qc_metrics))
 batch_color = cd73ft_joyal.uns["batch_colors"][0]
 
 fig, axes = plt.subplots(1, len(qc_metrics), squeeze=False, figsize=(9, 3.0),
@@ -1237,21 +1556,21 @@ the UMAP above uses, so a cluster is the same colour in both figures.
 ``` python
 # only scanpy reads the _colors entry out of uns, so the palette is handed to seaborn
 # explicitly — otherwise a cluster changes color between the UMAP and these violins
-cluster_palette = dict(zip(cd73ft_joyal.obs[ranked_key].cat.categories, cd73ft_joyal.uns[f"{ranked_key}_colors"]))
+cluster_palette = dict(zip(cd73ft_joyal.obs[dendrogram_key].cat.categories, cd73ft_joyal.uns[f"{dendrogram_key}_colors"]))
 
 fig, axes = plt.subplots(len(qc_metrics), 1, squeeze=False, sharex=True, figsize=(9, 4.3),
                          constrained_layout=True)
 for ax, (qc_key, qc_label) in zip(axes.flat, qc_metrics.items()):
     # dodge=False because hue repeats x: left on, seaborn gives each of the 21 clusters its
     # own sub-slot and every violin is drawn a twentieth of its slot wide, off its tick
-    sns.violinplot(data=qc_df, x=ranked_key, y=qc_key, hue=ranked_key, palette=cluster_palette,
+    sns.violinplot(data=qc_df, x=dendrogram_key, y=qc_key, hue=dendrogram_key, palette=cluster_palette,
                    legend=False, dodge=False, cut=0, density_norm="width", inner="box",
                    inner_kws=violin_inner_kws, linewidth=0.5, saturation=1, ax=ax)
 
     # seaborn colours the bodies in an order that does not follow the x positions when hue
     # repeats x, so each is recoloured from the cluster it actually sits under. The order
     # comes off the categorical rather than the tick labels, which are empty on a shared axis.
-    cluster_order = list(cd73ft_joyal.obs[ranked_key].cat.categories)
+    cluster_order = list(cd73ft_joyal.obs[dendrogram_key].cat.categories)
     for body in ax.collections:
         extents = body.get_paths()[0].get_extents()
         body.set_facecolor(cluster_palette[cluster_order[round((extents.x0 + extents.x1) / 2)]])
@@ -1323,7 +1642,7 @@ cd73ft_joyal.obs["cell_call"] = pd.Categorical(
 )
 
 # read by the refinement below, and shown there as the purity column
-cell_composition = pd.crosstab(cd73ft_joyal.obs[ranked_key], cd73ft_joyal.obs["cell_call"])
+cell_composition = pd.crosstab(cd73ft_joyal.obs[dendrogram_key], cd73ft_joyal.obs["cell_call"])
 ```
 
 </details>
@@ -1346,7 +1665,7 @@ row.
 # only the row scaling is a call. A column's brightest cell is the best home for that class
 # whether or not the class is present at all: RPE peaks somewhere in every batch, which says
 # where it would land rather than that it was found.
-mean_cell_correlation = cell_correlation.groupby(cd73ft_joyal.obs[ranked_key], observed=True).mean()
+mean_cell_correlation = cell_correlation.groupby(cd73ft_joyal.obs[dendrogram_key], observed=True).mean()
 
 cluster_range = mean_cell_correlation.max(axis=1) - mean_cell_correlation.min(axis=1)
 cells_scaled_by_cluster = mean_cell_correlation.sub(
@@ -1462,7 +1781,7 @@ cluster_calls = mean_cell_correlation.idxmax(axis=1)
 cluster_call_overrides = {}
 cluster_calls.update(pd.Series(cluster_call_overrides))
 
-cd73ft_joyal.obs["cell_type"] = cd73ft_joyal.obs[ranked_key].map(cluster_calls).astype("category")
+cd73ft_joyal.obs["cell_type"] = cd73ft_joyal.obs[dendrogram_key].map(cluster_calls).astype("category")
 
 # keyed on every class in the reference rather than only the ones called, so a cell type
 # keeps its colour whatever a given resolution happens to find
@@ -1493,7 +1812,7 @@ min_cells = 10
 for cluster in cell_composition.index:
     counts = cell_composition.loc[cluster]
     populations = counts[(counts >= min_cells) & (counts / counts.sum() >= min_share)]
-    in_cluster = (cd73ft_joyal.obs[ranked_key] == cluster).to_numpy()
+    in_cluster = (cd73ft_joyal.obs[dendrogram_key] == cluster).to_numpy()
 
     for population in populations.index:
         if population not in cd73ft_joyal.obs["cell_type"].cat.categories:
@@ -1591,8 +1910,17 @@ type, and the box inside marks the quartiles and the median.
 ``` python
 txn1_df = sc.get.obs_df(cd73ft_joyal, keys=["TXN1", "cell_type", "condition", "timepoint"])
 
+# cell types ordered by their mean Txn1, highest first
+cell_type_order = (
+    txn1_df.groupby("cell_type", observed=True)["TXN1"]
+    .mean()
+    .sort_values(ascending=False)
+    .index.tolist()
+)
+
 fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
-sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", hue="cell_type",
+sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", order=cell_type_order,
+               hue="cell_type", hue_order=cell_type_order,
                palette=cell_type_palette, legend=True, dodge=False, cut=0,
                density_norm="width", inner="box", inner_kws=violin_inner_kws,
                linewidth=0.5, saturation=1, ax=ax)
@@ -1600,7 +1928,6 @@ sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", hue="cell_type",
 # with hue repeating x and dodge off, seaborn hands the bodies their colours in an order
 # that does not follow the x positions — the legend ends up right and the violins wrong.
 # Recolour each body from the cell type it actually sits under.
-cell_type_order = list(cd73ft_joyal.obs["cell_type"].cat.categories)
 for body in ax.collections:
     extents = body.get_paths()[0].get_extents()
     body.set_facecolor(cell_type_palette[cell_type_order[round((extents.x0 + extents.x1) / 2)]])
@@ -1635,12 +1962,21 @@ rather than by cell type.
 <summary>Code</summary>
 
 ``` python
+# cell types ordered by their mean Txn1, highest first
+cell_type_order = (
+    txn1_df.groupby("cell_type", observed=True)["TXN1"]
+    .mean()
+    .sort_values(ascending=False)
+    .index.tolist()
+)
+
 condition_palette = dict(zip(cd73ft_joyal.obs["condition"].cat.categories,
                              cd73ft_joyal.uns["condition_colors"]))
 
 fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
-sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", hue="condition",
-               palette=condition_palette, cut=0, density_norm="width", inner="box",
+sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", order=cell_type_order,
+               hue="condition", palette=condition_palette, cut=0, density_norm="width",
+               inner="box",
                inner_kws=violin_inner_kws, linewidth=0.5, ax=ax)
 ax.set_xlabel("")
 ax.set_ylabel("Txn1 (log1p)", fontsize=9)
@@ -1671,12 +2007,21 @@ violin for P14 and one for P17, coloured by timepoint.
 <summary>Code</summary>
 
 ``` python
+# cell types ordered by their mean Txn1, highest first
+cell_type_order = (
+    txn1_df.groupby("cell_type", observed=True)["TXN1"]
+    .mean()
+    .sort_values(ascending=False)
+    .index.tolist()
+)
+
 timepoint_palette = dict(zip(cd73ft_joyal.obs["timepoint"].cat.categories,
                              cd73ft_joyal.uns["timepoint_colors"]))
 
 fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
-sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", hue="timepoint",
-               palette=timepoint_palette, cut=0, density_norm="width", inner="box",
+sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", order=cell_type_order,
+               hue="timepoint", palette=timepoint_palette, cut=0, density_norm="width",
+               inner="box",
                inner_kws=violin_inner_kws, linewidth=0.5, ax=ax)
 ax.set_xlabel("")
 ax.set_ylabel("Txn1 (log1p)", fontsize=9)
@@ -1773,7 +2118,14 @@ the two timepoints, drawn on a shared y axis.
 <summary>Code</summary>
 
 ``` python
-cell_type_order = list(cd73ft_joyal.obs["cell_type"].cat.categories)
+# cell types ordered by their mean Txn1, highest first
+cell_type_order = (
+    txn1_df.groupby("cell_type", observed=True)["TXN1"]
+    .mean()
+    .sort_values(ascending=False)
+    .index.tolist()
+)
+
 condition_order = list(cd73ft_joyal.obs["condition"].cat.categories)
 timepoints = list(cd73ft_joyal.obs["timepoint"].cat.categories)
 
@@ -1822,6 +2174,14 @@ two conditions.
 <summary>Code</summary>
 
 ``` python
+# cell types ordered by their mean Txn1, highest first
+cell_type_order = (
+    txn1_df.groupby("cell_type", observed=True)["TXN1"]
+    .mean()
+    .sort_values(ascending=False)
+    .index.tolist()
+)
+
 timepoint_palette = dict(zip(cd73ft_joyal.obs["timepoint"].cat.categories,
                              cd73ft_joyal.uns["timepoint_colors"]))
 
