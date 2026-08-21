@@ -669,9 +669,9 @@ id="qc-violin-by-cluster-wr-joyal" />
 
 ## Correlation with the reference
 
-Correlating each cell against the same centroids says which clusters
-hold more than one cell type, without needing a marker panel to name the
-second one.
+Each cell correlated against the same centroids, over every gene the
+query and the reference share. The values are standardized within each
+cell.
 
 <details>
 <summary>Code</summary>
@@ -699,9 +699,8 @@ cell_composition = pd.crosstab(wr_joyal.obs[dendrogram_key], wr_joyal.obs["cell_
 
 The same embedding, coloured by each cell’s own best-correlating
 reference class rather than by the cluster it fell in. Every cell
-carries a call here, made from that one cell’s correlations and
-independent of its neighbours, so a cluster showing more than one colour
-is a cluster whose cells do not all prefer the same class.
+carries a call, made from that one cell’s correlations and independent
+of its neighbours.
 
 <details>
 <summary>Code</summary>
@@ -734,9 +733,9 @@ id="umap-cell-calls-wr-joyal" />
 
 ## Correlation on the UMAP
 
-The same correlations, one panel per reference class. A class with a
-population in this batch lights up somewhere; a class without one has
-nowhere bright to sit.
+The same correlations, one panel per reference class. Each panel colours
+every cell by its standardized correlation with that class, on its own
+scale.
 
 <details>
 <summary>Code</summary>
@@ -791,10 +790,9 @@ id="umap-cell-correlation-wr-joyal" />
 
 ## Correlation by cluster
 
-The per-cell correlations averaged over each cluster. Where a cluster
-holds one cell type it has one bright class; where it holds two, the
-brightness is shared. The cluster’s call is the brightest class in its
-row.
+The per-cell correlations averaged over each cluster, drawn three ways:
+the mean as it stands, scaled across each row, and scaled down each
+column.
 
 <details>
 <summary>Code</summary>
@@ -1008,9 +1006,7 @@ id="umap-initial-calls-wr-joyal" />
 
 One panel per cluster the composition left ambiguous. Each panel draws
 the whole embedding in grey and then that cluster’s own cells coloured
-by their per-cell call, on the palette the call UMAP uses. A cluster
-holding two populations puts its two colours in two places; a cluster
-whose cells simply disagree puts them on top of each other.
+by their per-cell call, on the palette the call UMAP uses.
 
 <details>
 <summary>Code</summary>
@@ -1069,12 +1065,13 @@ id="umap-flagged-clusters-wr-joyal" />
 
 ## Resolving cluster 2
 
-Everything about one flagged cluster on a single slide. On the left its
-cells sit on the embedding, coloured by their own per-cell call against
-the rest of the batch in grey. Along the bottom the QC metrics compare
-the cluster’s cells with every other cell in the batch, which is what
-separates a cluster holding two populations from one holding thin cells
-whose calls scatter.
+One flagged cluster on a single slide. On the left its cells sit on the
+embedding, coloured by their own per-cell call, against the rest of the
+batch in grey. On the right the same cells are placed by their
+correlation with the two classes most of them call, with the diagonal
+marking where a cell correlates equally with both. Along the bottom each
+QC metric compares the cluster’s cells with every other cell in the
+batch.
 
 <details>
 <summary>Code</summary>
@@ -1166,15 +1163,12 @@ plt.close(fig)
 src="txn1-expression-retina_files/figure-commonmark/resolve-cluster-2-wr-joyal-output-1.png"
 id="resolve-cluster-2-wr-joyal" />
 
-Pericyte and endothelial sit at opposite ends of the island rather than
-intermixed, and the QC metrics give no reason to think either group is
-thin — genes detected and total expression both run above the rest of
-the batch. Two populations, so the cells take their own per-cell calls.
+Pericyte takes 60% of this cluster and endothelial 39%. On the embedding
+the two sit at opposite ends of the island; on the scatter they form two
+clouds with nothing between them. Genes detected and total expression
+both run above the rest of the batch.
 
-One cell calls RPE. Its correlations are flat across the top — RPE 1.20,
-Pericyte 1.14, Astrocyte 1.11 — so nothing is really being claimed about
-it either way, and at one cell it makes no difference which way it
-falls.
+One cell calls RPE, at RPE 1.20, Pericyte 1.14 and Astrocyte 1.11.
 
 <details>
 <summary>Code</summary>
@@ -1196,12 +1190,13 @@ wr_joyal.obs["cell_type"] = cell_type
 
 ## Resolving cluster 3
 
-Everything about one flagged cluster on a single slide. On the left its
-cells sit on the embedding, coloured by their own per-cell call against
-the rest of the batch in grey. Along the bottom the QC metrics compare
-the cluster’s cells with every other cell in the batch, which is what
-separates a cluster holding two populations from one holding thin cells
-whose calls scatter.
+One flagged cluster on a single slide. On the left its cells sit on the
+embedding, coloured by their own per-cell call, against the rest of the
+batch in grey. On the right the same cells are placed by their
+correlation with the two classes most of them call, with the diagonal
+marking where a cell correlates equally with both. Along the bottom each
+QC metric compares the cluster’s cells with every other cell in the
+batch.
 
 <details>
 <summary>Code</summary>
@@ -1293,27 +1288,16 @@ plt.close(fig)
 src="txn1-expression-retina_files/figure-commonmark/resolve-cluster-3-wr-joyal-output-1.png"
 id="resolve-cluster-3-wr-joyal" />
 
-Astrocyte takes 47% of this cluster and Müller glia 39%, and the two sit
-in separate places on the embedding and in two clouds on the scatter,
-closer together than cluster 2’s but still apart.
+Astrocyte takes 47% of this cluster, Müller glia 39% and RPE 14%.
+Astrocyte and Müller glia sit in separate places on the embedding and in
+two clouds on the scatter.
 
-The further 14% calling RPE are a third population rather than a tail.
-They are low on both axes of the scatter, which on its own would be the
-signature of a cell matching nothing in particular — but they are not
-low everywhere. Their mean standardized correlation to RPE is 2.34,
-against 0.76 for the rest of the cluster and -0.10 across the batch, and
-the weakest of them still sits above the batch’s 99th percentile. They
-also sit apart from the rest of the cluster on the embedding, in a
-tighter group of their own.
-
-They are shallow, at a median 614 genes against the cluster’s 1,591,
-which is worth carrying forward as a caveat. RPE carry-over is expected
-in a whole retina prep, though: the sheet is adherent to the
-photoreceptor layer, and epithelium tends to come through a dissociation
-stressed. Shallow cells with a signature this specific are more likely
-to be the real thing than an artefact of their depth.
-
-Three populations, so the cells take their own per-cell calls.
+The RPE-called cells are low on both axes of that scatter. Their mean
+standardized correlation to RPE is 2.34, against 0.76 for the rest of
+the cluster and -0.10 across the batch, and the weakest of them sits
+above the batch’s 99th percentile. On the embedding they sit apart from
+the rest of the cluster, in a tighter group. They carry a median 614
+genes against the cluster’s 1,591.
 
 <details>
 <summary>Code</summary>
@@ -1330,12 +1314,13 @@ wr_joyal.obs["cell_type"] = cell_type
 
 ## Resolving cluster 9
 
-Everything about one flagged cluster on a single slide. On the left its
-cells sit on the embedding, coloured by their own per-cell call against
-the rest of the batch in grey. Along the bottom the QC metrics compare
-the cluster’s cells with every other cell in the batch, which is what
-separates a cluster holding two populations from one holding thin cells
-whose calls scatter.
+One flagged cluster on a single slide. On the left its cells sit on the
+embedding, coloured by their own per-cell call, against the rest of the
+batch in grey. On the right the same cells are placed by their
+correlation with the two classes most of them call, with the diagonal
+marking where a cell correlates equally with both. Along the bottom each
+QC metric compares the cluster’s cells with every other cell in the
+batch.
 
 <details>
 <summary>Code</summary>
@@ -1427,13 +1412,10 @@ plt.close(fig)
 src="txn1-expression-retina_files/figure-commonmark/resolve-cluster-9-wr-joyal-output-1.png"
 id="resolve-cluster-9-wr-joyal" />
 
-AC takes 90% of this cluster, and the tenth that calls something else is
-a fringe rather than a population. On the scatter the AC cells are one
-dense cloud and the BC-called cells trail off its edge toward the
-bipolar territory; on the embedding they sit along the boundary between
-the two. There is no second cloud to split on, and the cluster is not
-thin — it runs above the rest of the batch on genes detected. One
-population.
+AC takes 90% of this cluster, BC 4% and Rod 3%. On the scatter the AC
+cells are one dense cloud and the BC-called cells continue off its edge;
+on the embedding they sit along the boundary between this cluster and
+the bipolar territory. Genes detected runs above the rest of the batch.
 
 <details>
 <summary>Code</summary>
@@ -2126,9 +2108,9 @@ id="qc-violin-by-cluster-cd73ft-joyal" />
 
 ## Correlation with the reference
 
-Correlating each cell against the same centroids says which clusters
-hold more than one cell type, without needing a marker panel to name the
-second one.
+Each cell correlated against the same centroids, over every gene the
+query and the reference share. The values are standardized within each
+cell.
 
 <details>
 <summary>Code</summary>
@@ -2156,9 +2138,8 @@ cell_composition = pd.crosstab(cd73ft_joyal.obs[dendrogram_key], cd73ft_joyal.ob
 
 The same embedding, coloured by each cell’s own best-correlating
 reference class rather than by the cluster it fell in. Every cell
-carries a call here, made from that one cell’s correlations and
-independent of its neighbours, so a cluster showing more than one colour
-is a cluster whose cells do not all prefer the same class.
+carries a call, made from that one cell’s correlations and independent
+of its neighbours.
 
 <details>
 <summary>Code</summary>
@@ -2191,9 +2172,9 @@ id="umap-cell-calls-cd73ft-joyal" />
 
 ## Correlation on the UMAP
 
-The same correlations, one panel per reference class. A class with a
-population in this batch lights up somewhere; a class without one has
-nowhere bright to sit.
+The same correlations, one panel per reference class. Each panel colours
+every cell by its standardized correlation with that class, on its own
+scale.
 
 <details>
 <summary>Code</summary>
@@ -2248,10 +2229,9 @@ id="umap-cell-correlation-cd73ft-joyal" />
 
 ## Correlation by cluster
 
-The per-cell correlations averaged over each cluster. Where a cluster
-holds one cell type it has one bright class; where it holds two, the
-brightness is shared. The cluster’s call is the brightest class in its
-row.
+The per-cell correlations averaged over each cluster, drawn three ways:
+the mean as it stands, scaled across each row, and scaled down each
+column.
 
 <details>
 <summary>Code</summary>
@@ -2465,9 +2445,7 @@ id="umap-initial-calls-cd73ft-joyal" />
 
 One panel per cluster the composition left ambiguous. Each panel draws
 the whole embedding in grey and then that cluster’s own cells coloured
-by their per-cell call, on the palette the call UMAP uses. A cluster
-holding two populations puts its two colours in two places; a cluster
-whose cells simply disagree puts them on top of each other.
+by their per-cell call, on the palette the call UMAP uses.
 
 <details>
 <summary>Code</summary>
@@ -2526,12 +2504,13 @@ id="umap-flagged-clusters-cd73ft-joyal" />
 
 ## Resolving cluster 1
 
-Everything about one flagged cluster on a single slide. On the left its
-cells sit on the embedding, coloured by their own per-cell call against
-the rest of the batch in grey. Along the bottom the QC metrics compare
-the cluster’s cells with every other cell in the batch, which is what
-separates a cluster holding two populations from one holding thin cells
-whose calls scatter.
+One flagged cluster on a single slide. On the left its cells sit on the
+embedding, coloured by their own per-cell call, against the rest of the
+batch in grey. On the right the same cells are placed by their
+correlation with the two classes most of them call, with the diagonal
+marking where a cell correlates equally with both. Along the bottom each
+QC metric compares the cluster’s cells with every other cell in the
+batch.
 
 <details>
 <summary>Code</summary>
@@ -2623,17 +2602,12 @@ plt.close(fig)
 src="txn1-expression-retina_files/figure-commonmark/resolve-cluster-1-cd73ft-joyal-output-1.png"
 id="resolve-cluster-1-cd73ft-joyal" />
 
-Nothing here is a cell type. These cells run a median 9.6% hemoglobin
-against effectively none anywhere else in the batch, on 150 genes
-detected against 640 and a third of the total expression. That is red
-blood cell contamination and debris, and the reference has twelve neural
-retina classes with no erythrocyte among them, so the per-cell calls
-scatter across BC, endothelial and Muller glia without any of them
-meaning anything. The scatter panel shows no structure at all, which is
-what a cluster with no biology in it looks like.
-
-Labelled for what it is, rather than given a class it does not belong
-to.
+These cells carry a median 9.6% hemoglobin, against effectively none
+anywhere else in the batch, on 150 genes detected against 640 and a
+third of the total expression. Their per-cell calls divide across BC at
+49%, endothelial at 19% and Müller glia at 14%, and on the scatter they
+take no particular arrangement. The reference holds twelve neural retina
+classes and no erythrocyte.
 
 <details>
 <summary>Code</summary>
@@ -2651,12 +2625,13 @@ cd73ft_joyal.obs["cell_type"] = cell_type
 
 ## Resolving cluster 7
 
-Everything about one flagged cluster on a single slide. On the left its
-cells sit on the embedding, coloured by their own per-cell call against
-the rest of the batch in grey. Along the bottom the QC metrics compare
-the cluster’s cells with every other cell in the batch, which is what
-separates a cluster holding two populations from one holding thin cells
-whose calls scatter.
+One flagged cluster on a single slide. On the left its cells sit on the
+embedding, coloured by their own per-cell call, against the rest of the
+batch in grey. On the right the same cells are placed by their
+correlation with the two classes most of them call, with the diagonal
+marking where a cell correlates equally with both. Along the bottom each
+QC metric compares the cluster’s cells with every other cell in the
+batch.
 
 <details>
 <summary>Code</summary>
@@ -2748,18 +2723,12 @@ plt.close(fig)
 src="txn1-expression-retina_files/figure-commonmark/resolve-cluster-7-cd73ft-joyal-output-1.png"
 id="resolve-cluster-7-cd73ft-joyal" />
 
-Muller glia take 78% of this cluster and RPE 15%, which is the shape
-whole retina cluster 3 had — but the resemblance stops there. Those
-cells correlate with RPE at 1.64 against 1.12 for the rest of the
-cluster, a fraction of the gap cluster 3 showed, and they are just as
-high on Muller glia at 1.39. They are also more spread out across the
-embedding than the cells around them, where cluster 3’s RPE cells were
-tighter, and they are the deeper cells rather than the shallow ones.
-Elevated RPE character on Muller glia, then, rather than RPE cells:
-Muller glia phagocytose debris, and there is RPE material in this
-preparation for them to have taken up.
-
-One population.
+Müller glia take 78% of this cluster and RPE 15%. The RPE-called cells
+correlate with RPE at 1.64, against 1.12 for the rest of the cluster,
+and with Müller glia at 1.39, against 1.70. On the embedding they are
+more spread out than the cells around them, at a standard deviation of
+2.55 and 1.60 against 0.89 and 0.72. They carry a median 1,298 genes
+against the cluster’s 1,032.
 
 <details>
 <summary>Code</summary>
@@ -2776,12 +2745,13 @@ cd73ft_joyal.obs["cell_type"] = cell_type
 
 ## Resolving cluster 12
 
-Everything about one flagged cluster on a single slide. On the left its
-cells sit on the embedding, coloured by their own per-cell call against
-the rest of the batch in grey. Along the bottom the QC metrics compare
-the cluster’s cells with every other cell in the batch, which is what
-separates a cluster holding two populations from one holding thin cells
-whose calls scatter.
+One flagged cluster on a single slide. On the left its cells sit on the
+embedding, coloured by their own per-cell call, against the rest of the
+batch in grey. On the right the same cells are placed by their
+correlation with the two classes most of them call, with the diagonal
+marking where a cell correlates equally with both. Along the bottom each
+QC metric compares the cluster’s cells with every other cell in the
+batch.
 
 <details>
 <summary>Code</summary>
@@ -2873,13 +2843,11 @@ plt.close(fig)
 src="txn1-expression-retina_files/figure-commonmark/resolve-cluster-12-cd73ft-joyal-output-1.png"
 id="resolve-cluster-12-cd73ft-joyal" />
 
-Amacrine cells take 72% of this cluster and retinal ganglion cells 18%,
-and the two separate cleanly: the RGC cells are their own tight cloud
-well above the amacrine mass on the scatter, and their own lobe on the
-edge of the cluster on the embedding. The 6% calling BC trail off the
-other side without forming anything.
-
-A mixture, so the cells take their own calls.
+Amacrine cells take 72% of this cluster, retinal ganglion cells 18% and
+bipolar cells 6%. The RGC cells sit as their own cloud above the
+amacrine mass on the scatter, and as their own lobe on the edge of the
+cluster on the embedding. The BC-called cells continue off the other
+side of the amacrine cloud.
 
 <details>
 <summary>Code</summary>
@@ -2897,12 +2865,13 @@ cd73ft_joyal.obs["cell_type"] = cell_type
 
 ## Resolving cluster 14
 
-Everything about one flagged cluster on a single slide. On the left its
-cells sit on the embedding, coloured by their own per-cell call against
-the rest of the batch in grey. Along the bottom the QC metrics compare
-the cluster’s cells with every other cell in the batch, which is what
-separates a cluster holding two populations from one holding thin cells
-whose calls scatter.
+One flagged cluster on a single slide. On the left its cells sit on the
+embedding, coloured by their own per-cell call, against the rest of the
+batch in grey. On the right the same cells are placed by their
+correlation with the two classes most of them call, with the diagonal
+marking where a cell correlates equally with both. Along the bottom each
+QC metric compares the cluster’s cells with every other cell in the
+batch.
 
 <details>
 <summary>Code</summary>
@@ -2994,14 +2963,10 @@ plt.close(fig)
 src="txn1-expression-retina_files/figure-commonmark/resolve-cluster-14-cd73ft-joyal-output-1.png"
 id="resolve-cluster-14-cd73ft-joyal" />
 
-Rods take 84% of this cluster, which is what a rod-depleted preparation
-leaves behind, and they are one tight cloud on the scatter. The cells
-are shallow — a median 250 genes against 640 for the batch — though rods
-are small and low in complexity to begin with. The 9% calling BC are
-seven cells that sit somewhere else entirely on the embedding, up among
-the bipolar territory rather than with the rest of the cluster.
-
-One population.
+Rods take 84% of this cluster and bipolar cells 9%. The rod-called cells
+are one cloud on the scatter. The cluster carries a median 250 genes
+against 640 for the batch. The seven BC-called cells sit away from the
+rest of the cluster on the embedding, among the bipolar territory.
 
 <details>
 <summary>Code</summary>
