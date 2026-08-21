@@ -558,11 +558,12 @@ plt.close(fig)
 src="txn1-expression-retina_files/figure-commonmark/umap-cell-correlation-wr-joyal-output-1.png"
 id="umap-cell-correlation-wr-joyal" />
 
-## Correlation by cell type
+## Cell type calls
 
-The same correlations grouped by the calls the refinement settled on. A
-diagonal here is the check that the refinement worked: each cell type
-should correlate best with its own class.
+Each cluster takes the reference class it correlates with best. The
+per-cell correlations then refine that: where a real share of a
+cluster’s cells prefer some other class, those cells take it instead of
+the cluster’s call.
 
 ``` python
 # the call is the best-correlating reference class. The marker scores stay in the document
@@ -619,32 +620,6 @@ wr_joyal.uns["cell_type_colors"] = [
     cell_type_palette[cell_type] for cell_type in wr_joyal.obs["cell_type"].cat.categories
 ]
 ```
-
-``` python
-# the same correlations grouped by the call the refinement settled on rather than by cluster,
-# and scaled per row for the same reason. A diagonal is the check that it worked.
-mean_by_type = cell_correlation.groupby(wr_joyal.obs["cell_type"], observed=True).mean()
-type_range = mean_by_type.max(axis=1) - mean_by_type.min(axis=1)
-mean_by_type = mean_by_type.sub(mean_by_type.min(axis=1), axis=0).div(type_range, axis=0)
-
-fig, ax = plt.subplots(figsize=(6.5, 4.3), constrained_layout=True)
-sns.heatmap(mean_by_type, cmap="viridis", linewidths=0.5, linecolor="white",
-            xticklabels=True, yticklabels=True,
-            cbar_kws={"shrink": 0.6, "pad": 0.02}, ax=ax)
-ax.set_xlabel("Reference class", fontsize=8)
-ax.set_ylabel("Called cell type", fontsize=8)
-ax.tick_params(axis="x", labelrotation=45, labelsize=7)
-ax.tick_params(axis="y", labelrotation=0, labelsize=7)
-for label in ax.get_xticklabels():
-    label.set_ha("right")
-
-plt.show()
-plt.close(fig)
-```
-
-<img
-src="txn1-expression-retina_files/figure-commonmark/heatmap-cells-by-type-wr-joyal-output-1.png"
-id="heatmap-cells-by-type-wr-joyal" />
 
 ## Preliminary cell types on the UMAP
 
@@ -1244,11 +1219,12 @@ plt.close(fig)
 src="txn1-expression-retina_files/figure-commonmark/umap-cell-correlation-cd73ft-joyal-output-1.png"
 id="umap-cell-correlation-cd73ft-joyal" />
 
-## Correlation by cell type
+## Cell type calls
 
-The same correlations grouped by the calls the refinement settled on. A
-diagonal here is the check that the refinement worked: each cell type
-should correlate best with its own class.
+Each cluster takes the reference class it correlates with best. The
+per-cell correlations then refine that: where a real share of a
+cluster’s cells prefer some other class, those cells take it instead of
+the cluster’s call.
 
 ``` python
 # the call is the best-correlating reference class. The marker scores stay in the document
@@ -1305,32 +1281,6 @@ cd73ft_joyal.uns["cell_type_colors"] = [
     cell_type_palette[cell_type] for cell_type in cd73ft_joyal.obs["cell_type"].cat.categories
 ]
 ```
-
-``` python
-# the same correlations grouped by the call the refinement settled on rather than by cluster,
-# and scaled per row for the same reason. A diagonal is the check that it worked.
-mean_by_type = cell_correlation.groupby(cd73ft_joyal.obs["cell_type"], observed=True).mean()
-type_range = mean_by_type.max(axis=1) - mean_by_type.min(axis=1)
-mean_by_type = mean_by_type.sub(mean_by_type.min(axis=1), axis=0).div(type_range, axis=0)
-
-fig, ax = plt.subplots(figsize=(6.5, 4.3), constrained_layout=True)
-sns.heatmap(mean_by_type, cmap="viridis", linewidths=0.5, linecolor="white",
-            xticklabels=True, yticklabels=True,
-            cbar_kws={"shrink": 0.6, "pad": 0.02}, ax=ax)
-ax.set_xlabel("Reference class", fontsize=8)
-ax.set_ylabel("Called cell type", fontsize=8)
-ax.tick_params(axis="x", labelrotation=45, labelsize=7)
-ax.tick_params(axis="y", labelrotation=0, labelsize=7)
-for label in ax.get_xticklabels():
-    label.set_ha("right")
-
-plt.show()
-plt.close(fig)
-```
-
-<img
-src="txn1-expression-retina_files/figure-commonmark/heatmap-cells-by-type-cd73ft-joyal-output-1.png"
-id="heatmap-cells-by-type-cd73ft-joyal" />
 
 ## Preliminary cell types on the UMAP
 
