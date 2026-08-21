@@ -1,0 +1,24 @@
+project:
+  type: default
+  # every document in the project renders here, so the render command carries no
+  # --output-dir and a second analysis lands beside the first without being told to
+  output-dir: reports
+
+format:
+  gfm:
+    toc: true
+    # 1, not 3: the documents have no level-3 headings, so depths 2 and 3 are the same
+    # hundred lines of step links in front of the first figure. Depth 1 is the two
+    # preparations and nothing else, which is the structure worth seeing on arrival —
+    # GitHub's own outline button still navigates to any individual step.
+    toc-depth: 1
+    # quarto's code-fold is an HTML-only option, so the folding is a filter that wraps
+    # each chunk in the <details> GitHub renders. gfm only — the pptx hides code already
+    filters:
+      - assets/fold-code.lua
+  pptx:
+    slide-level: 2
+    echo: false
+    # the OUHSC deck, carried over from sammy_r21. Quarto takes the layouts and fonts
+    # from it; the slide structure still comes from slide-level above
+    reference-doc: assets/ouhsc_ppt_template.pptx

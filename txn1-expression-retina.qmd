@@ -3,21 +3,6 @@ title: "OIR retina scRNA-seq"
 subtitle: "WR_Joyal and Cd73ft_Joyal, analysed the same way"
 author: "Brent Biddy"
 date: today
-format:
-  gfm:
-    toc: true
-    # 1, not 3: the document has no level-3 headings, so depths 2 and 3 are the same
-    # hundred lines of step links in front of the first figure. Depth 1 is the two
-    # preparations and nothing else, which is the structure worth seeing on arrival —
-    # GitHub's own outline button still navigates to any individual step.
-    toc-depth: 1
-    # quarto's code-fold is an HTML-only option, so the folding is a filter that wraps
-    # each chunk in the <details> GitHub renders. gfm only — the pptx hides code already
-    filters:
-      - fold-code.lua
-  pptx:
-    slide-level: 2
-    echo: false
 jupyter: oir-analysis-3
 ---
 

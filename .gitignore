@@ -14,7 +14,11 @@ data/
 # a format git has nothing useful to say about. Rebuild it by rendering.
 *.pptx
 
-# A render that forgot --output-dir, which belongs in reports/ rather than here.
+# The template the deck is rendered from is an input, not a render, so it is committed
+# even though it is a deck.
+!assets/*.pptx
+
+# A render that landed here rather than in reports/, where output-dir puts it.
 /*_files/
 
 # Python

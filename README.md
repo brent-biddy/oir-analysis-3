@@ -64,8 +64,11 @@ two files in `reports/`, a github markdown document and a powerpoint deck. The p
 not included in the repo.
 
 ```bash
-quarto render txn1-expression-retina.qmd --output-dir reports
+quarto render txn1-expression-retina.qmd
 ```
+
+`_quarto.yml` holds the format settings the documents share, including the output directory,
+so each document is rendered by name and lands in `reports/` without being told to.
 
 The first render downloads the data, then parses and clusters it, which takes a few minutes. The
 downloads and the objects the analysis builds along the way are saved to `data/`, and later
@@ -80,9 +83,12 @@ rm data/processed/GSE150703_adata_WR_Joyal_clustered.h5ad    # to change the gen
 
 ```
 ├── txn1-expression-retina.qmd    the analysis
-├── fold-code.lua                 folds the code chunks in the gfm render
+├── _quarto.yml                   the format settings the documents share
 ├── environment.yml
-├── reports/                      everything the document renders to
+├── assets/                       files the render reads
+│   ├── fold-code.lua                     folds the code chunks in the gfm render
+│   └── ouhsc_ppt_template.pptx           the deck the pptx render takes its theme from
+├── reports/                      everything the documents render to
 │   ├── txn1-expression-retina.md         the gfm render, committed so GitHub shows it
 │   └── txn1-expression-retina_files/     its figures
 └── data/                         downloads and saved objects (gitignored, reproducible)
