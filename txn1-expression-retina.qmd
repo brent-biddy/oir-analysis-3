@@ -11,6 +11,10 @@ format:
     # preparations and nothing else, which is the structure worth seeing on arrival —
     # GitHub's own outline button still navigates to any individual step.
     toc-depth: 1
+    # quarto's code-fold is an HTML-only option, so the folding is a filter that wraps
+    # each chunk in the <details> GitHub renders. gfm only — the pptx hides code already
+    filters:
+      - fold-code.lua
   pptx:
     slide-level: 2
     echo: false

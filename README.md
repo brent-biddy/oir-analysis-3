@@ -80,6 +80,7 @@ rm data/processed/GSE150703_adata_WR_Joyal_clustered.h5ad    # to change the gen
 
 ```
 ├── txn1-expression-retina.qmd    the analysis
+├── fold-code.lua                 folds the code chunks in the gfm render
 ├── environment.yml
 ├── reports/                      everything the document renders to
 │   ├── txn1-expression-retina.md         the gfm render, committed so GitHub shows it
