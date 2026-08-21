@@ -252,9 +252,8 @@ First we’ll subset the query data down to the `WR_Joyal` batch, and
 analyze the batch’s cells in isolation.
 
 Then we’ll compute QC metrics, filter out rarely detected genes, keep
-the most variable genes, and embed. Rather than commit to one resolution
-up front, we’ll cluster across a sweep of resolutions and choose from it
-in the next step.
+the most variable genes, and embed, and cluster at the resolution chosen
+for this batch.
 
 <details>
 <summary>Code</summary>
