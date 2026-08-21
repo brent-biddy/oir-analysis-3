@@ -25,10 +25,26 @@ different conditions.
 
 ## Running The Analysis
 
-### 1. Install conda
+### 1. Clone the repository
 
-We use conda as the package manager for this analysis, so let's start by making sure it's
-installed:
+We use git to get the analysis onto your machine, so let's start by making sure it's installed:
+
+```bash
+git --version
+```
+
+If git is not installed please see
+[these instructions](https://git-scm.com/downloads) for installing git. Then clone the repo and
+move into it — every command below is run from there:
+
+```bash
+git clone https://github.com/brent-biddy/oir-analysis-3.git
+cd oir-analysis-3
+```
+
+### 2. Install conda
+
+We use conda as the package manager for this analysis, so let's make sure it's installed too:
 
 ```bash
 conda --version
@@ -37,7 +53,7 @@ conda --version
 If conda is not installed please see
 [these instructions](https://docs.anaconda.com/miniconda/install/) for installing conda.
 
-### 2. Create the conda environment
+### 3. Create the conda environment
 
 Now that conda is installed, let's use it to install the software the analysis needs.
 `environment.yml` lists all of the software needed and we will use it to install these packages
@@ -48,7 +64,7 @@ conda env create -f environment.yml
 conda activate oir-analysis-3
 ```
 
-### 3. Register the Jupyter kernel
+### 4. Register the Jupyter kernel
 
 Now that the conda environment has been created, we need to register the jupyter kernel in the
 environment so it can be discovered by quarto.
@@ -57,7 +73,7 @@ environment so it can be discovered by quarto.
 python -m ipykernel install --user --name oir-analysis-3
 ```
 
-### 4. Render the Analysis
+### 5. Render the Analysis
 
 With the conda environment installed and activated we can now render the analysis. This creates
 two files in `reports/`, a github markdown document and a powerpoint deck. The powerpoint deck is
@@ -78,6 +94,10 @@ file it saved:
 ```bash
 rm data/processed/GSE150703_adata_WR_Joyal_clustered.h5ad    # to change the gene filter, leiden args
 ```
+
+That file also holds each cell's correlation against the reference, which is the slowest step in
+the analysis and the reason a later render takes seconds rather than minutes. Deleting it
+re-runs the correlation along with the clustering.
 
 ## Layout
 
