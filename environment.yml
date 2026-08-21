@@ -6,9 +6,6 @@
 #
 #   conda env create -f environment.yml
 #   conda activate oir-analysis-3
-#
-# Quarto is listed here so its version is pinned alongside the python side. With the env
-# active, the copy in it is the one that renders, whatever else is on PATH.
 name: oir-analysis-3
 
 channels:
@@ -23,14 +20,10 @@ dependencies:
   - scipy
   - numpy
   - pandas
-  # sc.tl.leiden is called with flavor="igraph", which uses python-igraph directly —
-  # leidenalg is the other flavor's backend and is deliberately not installed.
   - python-igraph
   - matplotlib
   - seaborn
-  # DataFrame.to_markdown() is what renders the tables in the report.
   - tabulate
-  # Quarto renders through a Jupyter kernel.
   - ipykernel
   - nbformat
   - nbclient
