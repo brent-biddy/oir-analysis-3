@@ -1,12 +1,12 @@
 # oir-analysis-3
 
-This repo contains the analysis of Txn1 expression in the mouse retina.
-Here are links to the reports in this repo:
+This repo contains analysis of Txn1 expression in the mouse retina.
+Below are links to the reports produced by this repo:
 
-- [**The analysis**](reports/txn1-expression-retina.md) — every step and every figure, rendered
-  for GitHub.
+- [**Txn1 Expression in the Mouse Retina**](reports/txn1-expression-retina.md) — clustering, cell
+  type annotation, and visualization of Txn1 expression.
 
-## The data
+## Analysis Overview
 
 We analyze a single-cell RNA seq data set from
 [Binet *et al.* 2020](https://doi.org/10.1126/science.aay5356), deposited at
@@ -17,8 +17,11 @@ timepoints p14 and p17, and two conditions, normoxia and oxygen-induced retinopa
 We annotate this data using a mouse retina single cell atlas from
 [Li *et al.* 2024](https://doi.org/10.1016/j.isci.2024.109916), which we pull from
 [CELLxGENE](https://cellxgene.cziscience.com/). The reference consists of 330,930 cells across
-twelve major cell types which we will try to use to annotate our data with. After annotation we
-inspect the expression of Txn1 across the different cell types in the different conditions.
+twelve major cell types which we will try to use to annotate our data with: amacrine cells (AC),
+astrocytes, bipolar cells (BC), cones, endothelial cells, horizontal cells (HC), Müller glia
+(MG), microglia, pericytes, retinal ganglion cells (RGC), retinal pigment epithelium (RPE), and
+rods. After annotation we inspect the expression of Txn1 across the different cell types in the
+different conditions.
 
 ## Running The Analysis
 
@@ -56,24 +59,18 @@ python -m ipykernel install --user --name oir-analysis-3
 
 ### 4. Render the Analysis
 
-With the conda environment installed and activated we can now render the analysis. One command
-builds both formats the document declares: a github formatted markdown document, which is the
-copy GitHub shows, and a powerpoint deck.
+With the conda environment installed and activated we can now render the analysis. This creates
+two files in `reports/`, a github markdown document and a powerpoint deck. The powerpoint deck is
+not included in the repo.
 
 ```bash
 quarto render txn1-expression-retina.qmd --output-dir reports
 ```
 
-The first render downloads ~3.7 GB — 226 MB of counts from GEO and a 3.5 GB atlas from
-CELLxGENE — then parses and clusters for a few minutes. Between the downloads and the objects
-the document saves alongside them, `data/` ends up around 4.3 GB. Later renders read those saved
-objects back and skip the work.
-
-### 5. Re-running a step
-
-The download, `create-anndata`, `reference-centroids` and both `cluster-*` chunks skip themselves
-if their output file already exists. That means editing anything inside those chunks does nothing
-until we delete what they wrote:
+The first render downloads the data, then parses and clusters it, which takes a few minutes. The
+downloads and the objects the analysis builds along the way are saved to `data/`, and later
+renders skip those steps if the file is already saved. To re-run one of these steps we delete the
+file it saved:
 
 ```bash
 rm data/processed/GSE150703_adata_WR_Joyal_clustered.h5ad    # to change the gene filter, leiden args
