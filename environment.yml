@@ -1,11 +1,11 @@
 # Conda env for rendering the analysis document.
 #
-# The env NAME is what the `jupyter:` line in txn1-expression-retina.qmd pins to. Quarto can only honour
-# that pin if it is run by a python that can see the kernel, so the env must be registered:
+# ipykernel installs a `python3` kernel inside the env, which is the kernel the `jupyter:` line
+# in txn1-expression-retina.qmd names. Activating the env is all that is needed for quarto to
+# find it — there is no kernel to register anywhere else:
 #
 #   conda env create -f environment.yml
 #   conda activate oir-analysis-3
-#   python -m ipykernel install --user --name oir-analysis-3
 #
 # Quarto is listed here so its version is pinned alongside the python side. With the env
 # active, the copy in it is the one that renders, whatever else is on PATH.

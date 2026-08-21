@@ -3,7 +3,7 @@ title: "OIR retina scRNA-seq"
 subtitle: "WR_Joyal and Cd73ft_Joyal, analysed the same way"
 author: "Brent Biddy"
 date: today
-jupyter: oir-analysis-3
+jupyter: python3
 ---
 
 ::: {.content-hidden when-format="pptx"}

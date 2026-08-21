@@ -64,16 +64,10 @@ conda env create -f environment.yml
 conda activate oir-analysis-3
 ```
 
-### 4. Register the Jupyter kernel
+Activating the environment is what points quarto at the right python: `ipykernel` installs its
+`python3` kernel inside the environment, and that is the kernel the analysis names.
 
-Now that the conda environment has been created, we need to register the jupyter kernel in the
-environment so it can be discovered by quarto.
-
-```bash
-python -m ipykernel install --user --name oir-analysis-3
-```
-
-### 5. Render the Analysis
+### 4. Render the Analysis
 
 With the conda environment installed and activated we can now render the analysis. This creates
 two files in `reports/`, a github markdown document and a powerpoint deck. The powerpoint deck is
@@ -83,9 +77,6 @@ not included in the repo.
 quarto render txn1-expression-retina.qmd
 ```
 
-`_quarto.yml` holds the format settings the documents share, including the output directory,
-so each document is rendered by name and lands in `reports/` without being told to.
-
 The first render downloads the data, then parses and clusters it, which takes a few minutes. The
 downloads and the objects the analysis builds along the way are saved to `data/`, and later
 renders skip those steps if the file is already saved. To re-run one of these steps we delete the
@@ -94,10 +85,6 @@ file it saved:
 ```bash
 rm data/processed/GSE150703_adata_WR_Joyal_clustered.h5ad    # to change the gene filter, leiden args
 ```
-
-That file also holds each cell's correlation against the reference, which is the slowest step in
-the analysis and the reason a later render takes seconds rather than minutes. Deleting it
-re-runs the correlation along with the clustering.
 
 ## Layout
 
