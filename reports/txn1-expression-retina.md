@@ -228,6 +228,8 @@ reference_centroids
 
 # Whole Retina
 
+## Cells across the design
+
 Now let’s work through the whole retina prep, the `WR_Joyal` batch. It
 holds 15,143 cells across both conditions and both timepoints, though
 not evenly:
@@ -875,187 +877,6 @@ plt.show()
 src="txn1-expression-retina_files/figure-commonmark/umap-cell-types-wr-joyal-output-1.png"
 id="umap-cell-types-wr-joyal" />
 
-## Txn1 on the UMAP
-
-Txn1 on that same embedding. Each point is a cell, coloured by its log1p
-Txn1 value on the viridis scale, and the colourbar underneath gives the
-range those colours span.
-
-<details>
-<summary>Code</summary>
-
-``` python
-fig, axs = plt.subplots(2, 1, height_ratios=[1, 0.22], figsize=(4.3, 3.9),
-                        constrained_layout=True)
-
-sc.pl.umap(wr_joyal, color="TXN1", ax=axs[0], frameon=True, colorbar_loc=None, show=False)
-axs[0].set_aspect("equal", adjustable="datalim")
-
-axs[1].axis("off")
-colorbar_ax = axs[1].inset_axes([0.325, 0.82, 0.35, 0.18])
-colorbar_ax.set_in_layout(False)
-colorbar = fig.colorbar(axs[0].collections[0], cax=colorbar_ax, orientation="horizontal")
-
-txn1_low, txn1_high = axs[0].collections[0].get_clim()
-colorbar_ticks = np.linspace(txn1_low, txn1_high, 3)
-colorbar.set_ticks(colorbar_ticks, labels=[f"{tick:.2f}" for tick in colorbar_ticks])
-colorbar.ax.tick_params(labelsize=7)
-
-plt.show()
-plt.close(fig)
-```
-
-</details>
-
-<img
-src="txn1-expression-retina_files/figure-commonmark/umap-txn1-wr-joyal-output-1.png"
-id="umap-txn1-wr-joyal" />
-
-## Txn1 by cell type
-
-Txn1 by cell type, as one violin per type. The x axis is the called cell
-type, the y axis is log1p Txn1, each violin is coloured by its own cell
-type, and the box inside marks the quartiles and the median.
-
-<details>
-<summary>Code</summary>
-
-``` python
-txn1_df = sc.get.obs_df(wr_joyal, keys=["TXN1", "cell_type", "condition", "timepoint"])
-
-# cell types ordered by their mean Txn1, highest first
-cell_type_order = (
-    txn1_df.groupby("cell_type", observed=True)["TXN1"]
-    .mean()
-    .sort_values(ascending=False)
-    .index.tolist()
-)
-
-fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
-sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", order=cell_type_order,
-               hue="cell_type", hue_order=cell_type_order,
-               palette=cell_type_palette, legend=True, dodge=False, cut=0,
-               density_norm="width", inner="box", inner_kws=violin_inner_kws,
-               linewidth=0.5, saturation=1, ax=ax)
-
-# with hue repeating x and dodge off, seaborn hands the bodies their colours in an order
-# that does not follow the x positions — the legend ends up right and the violins wrong.
-# Recolour each body from the cell type it actually sits under.
-for body in ax.collections:
-    extents = body.get_paths()[0].get_extents()
-    body.set_facecolor(cell_type_palette[cell_type_order[round((extents.x0 + extents.x1) / 2)]])
-
-ax.set_xlabel("")
-ax.set_ylabel("Txn1 (log1p)", fontsize=9)
-ax.tick_params(axis="x", labelrotation=45, labelsize=8)
-ax.tick_params(axis="y", labelsize=8)
-ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
-ax.set_axisbelow(True)
-for label in ax.get_xticklabels():
-    label.set_ha("right")
-ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
-
-plt.show()
-plt.close(fig)
-```
-
-</details>
-
-<img
-src="txn1-expression-retina_files/figure-commonmark/txn1-violin-celltype-wr-joyal-output-1.png"
-id="txn1-violin-celltype-wr-joyal" />
-
-## Txn1 by cell type and condition
-
-The same violins split by condition: each cell type’s slot on the x axis
-now holds one violin for NORM and one for OIR, coloured by condition
-rather than by cell type.
-
-<details>
-<summary>Code</summary>
-
-``` python
-# cell types ordered by their mean Txn1, highest first
-cell_type_order = (
-    txn1_df.groupby("cell_type", observed=True)["TXN1"]
-    .mean()
-    .sort_values(ascending=False)
-    .index.tolist()
-)
-
-condition_palette = dict(zip(wr_joyal.obs["condition"].cat.categories,
-                             wr_joyal.uns["condition_colors"]))
-
-fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
-sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", order=cell_type_order,
-               hue="condition", palette=condition_palette, cut=0, density_norm="width",
-               inner="box",
-               inner_kws=violin_inner_kws, linewidth=0.5, ax=ax)
-ax.set_xlabel("")
-ax.set_ylabel("Txn1 (log1p)", fontsize=9)
-ax.tick_params(axis="x", labelrotation=45, labelsize=8)
-ax.tick_params(axis="y", labelsize=8)
-ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
-ax.set_axisbelow(True)
-for label in ax.get_xticklabels():
-    label.set_ha("right")
-ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
-
-plt.show()
-plt.close(fig)
-```
-
-</details>
-
-<img
-src="txn1-expression-retina_files/figure-commonmark/txn1-violin-condition-wr-joyal-output-1.png"
-id="txn1-violin-condition-wr-joyal" />
-
-## Txn1 by cell type and timepoint
-
-The same again split by timepoint, so each cell type’s slot holds a
-violin for P14 and one for P17, coloured by timepoint.
-
-<details>
-<summary>Code</summary>
-
-``` python
-# cell types ordered by their mean Txn1, highest first
-cell_type_order = (
-    txn1_df.groupby("cell_type", observed=True)["TXN1"]
-    .mean()
-    .sort_values(ascending=False)
-    .index.tolist()
-)
-
-timepoint_palette = dict(zip(wr_joyal.obs["timepoint"].cat.categories,
-                             wr_joyal.uns["timepoint_colors"]))
-
-fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
-sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", order=cell_type_order,
-               hue="timepoint", palette=timepoint_palette, cut=0, density_norm="width",
-               inner="box",
-               inner_kws=violin_inner_kws, linewidth=0.5, ax=ax)
-ax.set_xlabel("")
-ax.set_ylabel("Txn1 (log1p)", fontsize=9)
-ax.tick_params(axis="x", labelrotation=45, labelsize=8)
-ax.tick_params(axis="y", labelsize=8)
-ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
-ax.set_axisbelow(True)
-for label in ax.get_xticklabels():
-    label.set_ha("right")
-ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
-
-plt.show()
-plt.close(fig)
-```
-
-</details>
-
-<img
-src="txn1-expression-retina_files/figure-commonmark/txn1-violin-timepoint-wr-joyal-output-1.png"
-id="txn1-violin-timepoint-wr-joyal" />
-
 ## Txn1 across the design
 
 Txn1 on the UMAP once per group in the design, with timepoint down the
@@ -1131,6 +952,10 @@ the two timepoints, drawn on a shared y axis.
 <summary>Code</summary>
 
 ``` python
+txn1_df = sc.get.obs_df(wr_joyal, keys=["TXN1", "cell_type", "condition", "timepoint"])
+condition_palette = dict(zip(wr_joyal.obs["condition"].cat.categories,
+                             wr_joyal.uns["condition_colors"]))
+
 # cell types ordered by their mean Txn1, highest first
 cell_type_order = (
     txn1_df.groupby("cell_type", observed=True)["TXN1"]
@@ -1234,6 +1059,28 @@ src="txn1-expression-retina_files/figure-commonmark/txn1-violin-stratified-by-co
 id="txn1-violin-stratified-by-condition-wr-joyal" />
 
 # Rod-depleted Retina
+
+## Cells across the design
+
+Now let’s work through the rod-depleted prep, the `Cd73ft_Joyal` batch.
+It holds 10,329 cells across both conditions and both timepoints, though
+not evenly:
+
+<details>
+<summary>Code</summary>
+
+``` python
+cd73ft_joyal_obs = adata.obs[adata.obs["batch"] == "Cd73ft_Joyal"]
+design = pd.crosstab(cd73ft_joyal_obs["condition"], cd73ft_joyal_obs["timepoint"])
+print(design.rename_axis(index=None, columns=None).to_markdown())   # a real table, not a repr
+```
+
+</details>
+
+|      |  P14 |  P17 |
+|:-----|-----:|-----:|
+| NORM | 2021 | 2518 |
+| OIR  | 3769 | 2021 |
 
 ## Cluster Cells
 
@@ -1862,187 +1709,6 @@ plt.show()
 src="txn1-expression-retina_files/figure-commonmark/umap-cell-types-cd73ft-joyal-output-1.png"
 id="umap-cell-types-cd73ft-joyal" />
 
-## Txn1 on the UMAP
-
-Txn1 on that same embedding. Each point is a cell, coloured by its log1p
-Txn1 value on the viridis scale, and the colourbar underneath gives the
-range those colours span.
-
-<details>
-<summary>Code</summary>
-
-``` python
-fig, axs = plt.subplots(2, 1, height_ratios=[1, 0.22], figsize=(4.3, 3.9),
-                        constrained_layout=True)
-
-sc.pl.umap(cd73ft_joyal, color="TXN1", ax=axs[0], frameon=True, colorbar_loc=None, show=False)
-axs[0].set_aspect("equal", adjustable="datalim")
-
-axs[1].axis("off")
-colorbar_ax = axs[1].inset_axes([0.325, 0.82, 0.35, 0.18])
-colorbar_ax.set_in_layout(False)
-colorbar = fig.colorbar(axs[0].collections[0], cax=colorbar_ax, orientation="horizontal")
-
-txn1_low, txn1_high = axs[0].collections[0].get_clim()
-colorbar_ticks = np.linspace(txn1_low, txn1_high, 3)
-colorbar.set_ticks(colorbar_ticks, labels=[f"{tick:.2f}" for tick in colorbar_ticks])
-colorbar.ax.tick_params(labelsize=7)
-
-plt.show()
-plt.close(fig)
-```
-
-</details>
-
-<img
-src="txn1-expression-retina_files/figure-commonmark/umap-txn1-cd73ft-joyal-output-1.png"
-id="umap-txn1-cd73ft-joyal" />
-
-## Txn1 by cell type
-
-Txn1 by cell type, as one violin per type. The x axis is the called cell
-type, the y axis is log1p Txn1, each violin is coloured by its own cell
-type, and the box inside marks the quartiles and the median.
-
-<details>
-<summary>Code</summary>
-
-``` python
-txn1_df = sc.get.obs_df(cd73ft_joyal, keys=["TXN1", "cell_type", "condition", "timepoint"])
-
-# cell types ordered by their mean Txn1, highest first
-cell_type_order = (
-    txn1_df.groupby("cell_type", observed=True)["TXN1"]
-    .mean()
-    .sort_values(ascending=False)
-    .index.tolist()
-)
-
-fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
-sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", order=cell_type_order,
-               hue="cell_type", hue_order=cell_type_order,
-               palette=cell_type_palette, legend=True, dodge=False, cut=0,
-               density_norm="width", inner="box", inner_kws=violin_inner_kws,
-               linewidth=0.5, saturation=1, ax=ax)
-
-# with hue repeating x and dodge off, seaborn hands the bodies their colours in an order
-# that does not follow the x positions — the legend ends up right and the violins wrong.
-# Recolour each body from the cell type it actually sits under.
-for body in ax.collections:
-    extents = body.get_paths()[0].get_extents()
-    body.set_facecolor(cell_type_palette[cell_type_order[round((extents.x0 + extents.x1) / 2)]])
-
-ax.set_xlabel("")
-ax.set_ylabel("Txn1 (log1p)", fontsize=9)
-ax.tick_params(axis="x", labelrotation=45, labelsize=8)
-ax.tick_params(axis="y", labelsize=8)
-ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
-ax.set_axisbelow(True)
-for label in ax.get_xticklabels():
-    label.set_ha("right")
-ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
-
-plt.show()
-plt.close(fig)
-```
-
-</details>
-
-<img
-src="txn1-expression-retina_files/figure-commonmark/txn1-violin-celltype-cd73ft-joyal-output-1.png"
-id="txn1-violin-celltype-cd73ft-joyal" />
-
-## Txn1 by cell type and condition
-
-The same violins split by condition: each cell type’s slot on the x axis
-now holds one violin for NORM and one for OIR, coloured by condition
-rather than by cell type.
-
-<details>
-<summary>Code</summary>
-
-``` python
-# cell types ordered by their mean Txn1, highest first
-cell_type_order = (
-    txn1_df.groupby("cell_type", observed=True)["TXN1"]
-    .mean()
-    .sort_values(ascending=False)
-    .index.tolist()
-)
-
-condition_palette = dict(zip(cd73ft_joyal.obs["condition"].cat.categories,
-                             cd73ft_joyal.uns["condition_colors"]))
-
-fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
-sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", order=cell_type_order,
-               hue="condition", palette=condition_palette, cut=0, density_norm="width",
-               inner="box",
-               inner_kws=violin_inner_kws, linewidth=0.5, ax=ax)
-ax.set_xlabel("")
-ax.set_ylabel("Txn1 (log1p)", fontsize=9)
-ax.tick_params(axis="x", labelrotation=45, labelsize=8)
-ax.tick_params(axis="y", labelsize=8)
-ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
-ax.set_axisbelow(True)
-for label in ax.get_xticklabels():
-    label.set_ha("right")
-ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
-
-plt.show()
-plt.close(fig)
-```
-
-</details>
-
-<img
-src="txn1-expression-retina_files/figure-commonmark/txn1-violin-condition-cd73ft-joyal-output-1.png"
-id="txn1-violin-condition-cd73ft-joyal" />
-
-## Txn1 by cell type and timepoint
-
-The same again split by timepoint, so each cell type’s slot holds a
-violin for P14 and one for P17, coloured by timepoint.
-
-<details>
-<summary>Code</summary>
-
-``` python
-# cell types ordered by their mean Txn1, highest first
-cell_type_order = (
-    txn1_df.groupby("cell_type", observed=True)["TXN1"]
-    .mean()
-    .sort_values(ascending=False)
-    .index.tolist()
-)
-
-timepoint_palette = dict(zip(cd73ft_joyal.obs["timepoint"].cat.categories,
-                             cd73ft_joyal.uns["timepoint_colors"]))
-
-fig, ax = plt.subplots(figsize=(9, 3.5), constrained_layout=True)
-sns.violinplot(data=txn1_df, x="cell_type", y="TXN1", order=cell_type_order,
-               hue="timepoint", palette=timepoint_palette, cut=0, density_norm="width",
-               inner="box",
-               inner_kws=violin_inner_kws, linewidth=0.5, ax=ax)
-ax.set_xlabel("")
-ax.set_ylabel("Txn1 (log1p)", fontsize=9)
-ax.tick_params(axis="x", labelrotation=45, labelsize=8)
-ax.tick_params(axis="y", labelsize=8)
-ax.grid(axis="y", color="#b0b0b0", linewidth=0.6)
-ax.set_axisbelow(True)
-for label in ax.get_xticklabels():
-    label.set_ha("right")
-ax.legend(title="", fontsize=7, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
-
-plt.show()
-plt.close(fig)
-```
-
-</details>
-
-<img
-src="txn1-expression-retina_files/figure-commonmark/txn1-violin-timepoint-cd73ft-joyal-output-1.png"
-id="txn1-violin-timepoint-cd73ft-joyal" />
-
 ## Txn1 across the design
 
 Txn1 on the UMAP once per group in the design, with timepoint down the
@@ -2118,6 +1784,10 @@ the two timepoints, drawn on a shared y axis.
 <summary>Code</summary>
 
 ``` python
+txn1_df = sc.get.obs_df(cd73ft_joyal, keys=["TXN1", "cell_type", "condition", "timepoint"])
+condition_palette = dict(zip(cd73ft_joyal.obs["condition"].cat.categories,
+                             cd73ft_joyal.uns["condition_colors"]))
+
 # cell types ordered by their mean Txn1, highest first
 cell_type_order = (
     txn1_df.groupby("cell_type", observed=True)["TXN1"]
