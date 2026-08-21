@@ -7,8 +7,8 @@
 #   conda activate oir-analysis-3
 #   python -m ipykernel install --user --name oir-analysis-3
 #
-# Quarto itself is not listed: it is installed system-wide and rendering through a conda copy
-# would shadow it.
+# Quarto is listed here so its version is pinned alongside the python side. With the env
+# active, the copy in it is the one that renders, whatever else is on PATH.
 name: oir-analysis-3
 
 channels:
@@ -17,6 +17,7 @@ channels:
 
 dependencies:
   - python=3.12
+  - quarto
   - anndata
   - scanpy
   - scipy
