@@ -524,7 +524,7 @@ plt.close(fig)
 
 ## QC metrics by cluster
 
-The same five metrics again, one per row, with the cells split along the x axis by cluster.
+Three of those metrics again, one per row, with the cells split along the x axis by cluster.
 Each violin takes its colour from the cluster palette the UMAP above uses, so a cluster is the
 same colour in both figures.
 
@@ -534,9 +534,18 @@ same colour in both figures.
 # explicitly — otherwise a cluster changes color between the UMAP and these violins
 cluster_palette = dict(zip(wr_joyal.obs[dendrogram_key].cat.categories, wr_joyal.uns[f"{dendrogram_key}_colors"]))
 
-fig, axes = plt.subplots(len(qc_metrics), 1, squeeze=False, sharex=True, figsize=(9, 4.3),
+# the ribosomal and hemoglobin fractions are dropped here. Split across every cluster they are
+# a flat line and a row of spikes, and the three that are left carry the figure. Both are still
+# on the batch-level violins above, and on the slides that inspect one cluster at a time — the
+# hemoglobin fraction is the whole story on one of them.
+cluster_qc_metrics = {
+    qc_key: qc_label for qc_key, qc_label in qc_metrics.items()
+    if qc_key not in ("pct_log1p_ribo", "pct_log1p_hb")
+}
+
+fig, axes = plt.subplots(len(cluster_qc_metrics), 1, squeeze=False, sharex=True, figsize=(9, 4.3),
                          constrained_layout=True)
-for ax, (qc_key, qc_label) in zip(axes.flat, qc_metrics.items()):
+for ax, (qc_key, qc_label) in zip(axes.flat, cluster_qc_metrics.items()):
     # dodge=False because hue repeats x: left on, seaborn gives each of the 21 clusters its
     # own sub-slot and every violin is drawn a twentieth of its slot wide, off its tick
     sns.violinplot(data=qc_df, x=dendrogram_key, y=qc_key, hue=dendrogram_key, palette=cluster_palette,
@@ -1764,7 +1773,7 @@ plt.close(fig)
 
 ## QC metrics by cluster
 
-The same five metrics again, one per row, with the cells split along the x axis by cluster.
+Three of those metrics again, one per row, with the cells split along the x axis by cluster.
 Each violin takes its colour from the cluster palette the UMAP above uses, so a cluster is the
 same colour in both figures.
 
@@ -1774,9 +1783,18 @@ same colour in both figures.
 # explicitly — otherwise a cluster changes color between the UMAP and these violins
 cluster_palette = dict(zip(cd73ft_joyal.obs[dendrogram_key].cat.categories, cd73ft_joyal.uns[f"{dendrogram_key}_colors"]))
 
-fig, axes = plt.subplots(len(qc_metrics), 1, squeeze=False, sharex=True, figsize=(9, 4.3),
+# the ribosomal and hemoglobin fractions are dropped here. Split across every cluster they are
+# a flat line and a row of spikes, and the three that are left carry the figure. Both are still
+# on the batch-level violins above, and on the slides that inspect one cluster at a time — the
+# hemoglobin fraction is the whole story on one of them.
+cluster_qc_metrics = {
+    qc_key: qc_label for qc_key, qc_label in qc_metrics.items()
+    if qc_key not in ("pct_log1p_ribo", "pct_log1p_hb")
+}
+
+fig, axes = plt.subplots(len(cluster_qc_metrics), 1, squeeze=False, sharex=True, figsize=(9, 4.3),
                          constrained_layout=True)
-for ax, (qc_key, qc_label) in zip(axes.flat, qc_metrics.items()):
+for ax, (qc_key, qc_label) in zip(axes.flat, cluster_qc_metrics.items()):
     # dodge=False because hue repeats x: left on, seaborn gives each of the 21 clusters its
     # own sub-slot and every violin is drawn a twentieth of its slot wide, off its tick
     sns.violinplot(data=qc_df, x=dendrogram_key, y=qc_key, hue=dendrogram_key, palette=cluster_palette,
