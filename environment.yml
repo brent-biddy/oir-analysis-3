@@ -1,11 +1,4 @@
-# Conda env for rendering the analysis document.
-#
-# ipykernel installs a `python3` kernel inside the env, which is the kernel the `jupyter:` line
-# in txn1-expression-retina.qmd names. Activating the env is all that is needed for quarto to
-# find it — there is no kernel to register anywhere else:
-#
-#   conda env create -f environment.yml
-#   conda activate oir-analysis-3
+# Conda env for rendering txn1-expression-retina.qmd. Activate it before rendering.
 name: oir-analysis-3
 
 channels:
